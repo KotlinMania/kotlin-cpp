@@ -1,4 +1,18 @@
-# rust-kotlin Agent & Architecture Contract
+# kotlin-cpp Agent & Architecture Contract
+
+This is an independent clean copy of `rust-kotlin`, initialized from commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. Its initial commit preserves the exact source tree. The implementation and tests are still the inherited Rust-to-Kotlin baseline, not a completed Kotlin frontend or C++ emitter.
+
+## Current direction — Kotlin input through the existing token system
+
+- Reuse the `syn-kotlin` / `proc-macro2-kotlin` token system already used here. Investigate associating Kotlin spellings and constructs with the same token/declaration representations used by the established Rust-to-token-to-Kotlin mapping.
+- Build on the actual KotlinMania parser, scope, trivia and emission work, including lalrpop-kotlin, starlark-kotlin and antlr4-kotlin where applicable. Do not replace it with a parallel C++ lexer/parser, a C++ wrapper or another unrelated helper layer.
+- Preserve source declarations, package identity, comments, branch/evaluation order and structure. The goal is deterministic, source-faithful transliteration with exact output fixtures, not merely a different implementation that passes a behavioral example.
+- Keep the Kotlin Multiplatform/native CLI structure. C++23 is the output/runtime target; it does not require rewriting the translation tool in C++.
+- Retain the inherited engine and tests as an inspectable baseline. Do not claim Kotlin tokenization, reverse mapping or C++ generation works until exercised with real source and checked output. Surface ambiguous or unsupported mappings rather than inventing missing source information.
+
+The contract below describes the inherited Rust-to-Kotlin baseline. Its fidelity, single-path and verification rules still apply; Rust-specific input/output rules do not redefine this new project's Kotlin-to-C++ goal.
+
+## Inherited Rust-to-Kotlin architecture
 
 `rust-kotlin` (`rust-transpiler`) is KotlinMania's deterministic, purely language-level Rust-to-Kotlin mechanical translator modeled on IntelliJ's J2K (`NewJavaToKotlinConverter`), packaged as a JetBrains IntelliJ IDEA plugin.
 

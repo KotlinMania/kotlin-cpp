@@ -1,4 +1,16 @@
-# Rust-transpiler
+# kotlin-cpp
+
+An independent clean copy of `rust-kotlin`, created to extend its existing KotlinMania token and emission machinery toward source-faithful Kotlin-to-C++ transliteration.
+
+The starting source is `rust-kotlin` commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. The first commit in this repository has the exact same Git tree, with fresh history and no inherited remote.
+
+**Current status:** the copied translator still implements Rust-to-Kotlin. Kotlin input association with the existing `syn-kotlin` / `proc-macro2-kotlin` representations and C++ output are the next implementation work, not completed features. Existing source packages, tests and token/emitter code remain intact. The native executable is named `kotlin-cpp.kexe`.
+
+The intended path is to reuse the established Rust → token → Kotlin associations from the Kotlin side, not build a C++ wrapper or a separate replacement parser/helper stack. Acceptance includes deterministic exact-output fixtures and recognizable correspondence with the Kotlin source, alongside compilation and semantic tests.
+
+See [AGENTS.md](AGENTS.md) for the current direction and the inherited baseline contract.
+
+## Inherited IntelliJ plugin documentation
 
 [![Twitter Follow](https://img.shields.io/badge/follow-%40JBPlatform-1DA1F2?logo=twitter)](https://twitter.com/JBPlatform)
 [![Developers Forum](https://img.shields.io/badge/JetBrains%20Platform-Join-blue)][jb:forum]

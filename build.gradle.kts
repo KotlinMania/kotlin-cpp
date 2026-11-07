@@ -419,7 +419,7 @@ kotlin {
 
     fun KotlinNativeTarget.addNativeCliExecutable() {
         binaries.executable {
-            baseName = "rust-kotlin"
+            baseName = publishProjectName
             entryPoint = "io.github.kotlinmania.rustkotlin.main"
         }
     }
@@ -1193,8 +1193,8 @@ val isMacOsHost = System.getProperty("os.name").lowercase().contains("mac")
 if (isMacOsHost) {
     tasks.register<StageNativeExecutableTask>("stageNativeCliBinary") {
         dependsOn("linkReleaseExecutableMacosArm64")
-        sourceBinary.set(layout.buildDirectory.file("bin/macosArm64/releaseExecutable/rust-kotlin.kexe"))
-        targetBinary.set(layout.buildDirectory.file("bin/rust-kotlin"))
+        sourceBinary.set(layout.buildDirectory.file("bin/macosArm64/releaseExecutable/$publishProjectName.kexe"))
+        targetBinary.set(layout.buildDirectory.file("bin/$publishProjectName"))
     }
     tasks.named("assemble") {
         dependsOn("stageNativeCliBinary")
