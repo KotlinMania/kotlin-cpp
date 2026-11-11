@@ -1,6 +1,6 @@
 # kotlin-cpp Agent & Architecture Contract
 
-This is an independent clean copy of `rust-kotlin`, initialized from commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. Its initial commit preserves the exact source tree. The implementation and tests are still the inherited Rust-to-Kotlin baseline, not a completed Kotlin frontend or C++ emitter.
+This is an independent clean copy of `rust-kotlin`, initialized from commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. Its initial commit preserves the exact source tree. The inherited Rust-to-Kotlin engine remains intact; Kotlin input now has a lexical Syn entry point and native `tokens` inspection, not a completed Kotlin parser or C++ emitter.
 
 ## Current direction — Kotlin input through the existing token system
 

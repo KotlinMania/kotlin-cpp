@@ -72,7 +72,7 @@ public fun computeTargetKotlinFileName(rustFileName: String): String {
 public fun collectTranspilableRustFilePaths(roots: List<String>): List<String> {
     val collected = linkedSetOf<String>()
     for (rawRoot in roots) {
-        collectRustPathsRecursive(KmPath(rawRoot), includeModuleRoots = false, collected = collected)
+        collectSourcePathsRecursive(KmPath(rawRoot), ::isTranspilableRustFileName, collected)
     }
     return collected.sorted()
 }
@@ -80,14 +80,22 @@ public fun collectTranspilableRustFilePaths(roots: List<String>): List<String> {
 public fun collectAllRustFilePathsIncludingModuleRoots(roots: List<String>): List<String> {
     val collected = linkedSetOf<String>()
     for (rawRoot in roots) {
-        collectRustPathsRecursive(KmPath(rawRoot), includeModuleRoots = true, collected = collected)
+        collectSourcePathsRecursive(KmPath(rawRoot), { it.endsWith(".rs", ignoreCase = true) }, collected)
     }
     return collected.sorted()
 }
 
-private fun collectRustPathsRecursive(
+internal fun collectKotlinFilePaths(roots: List<String>): List<String> {
+    val collected = linkedSetOf<String>()
+    for (root in roots) {
+        collectSourcePathsRecursive(KmPath(root), { it.endsWith(".kt", ignoreCase = true) }, collected)
+    }
+    return collected.sorted()
+}
+
+private fun collectSourcePathsRecursive(
     path: KmPath,
-    includeModuleRoots: Boolean,
+    acceptFileName: (String) -> Boolean,
     collected: MutableSet<String>,
 ) {
     val metadata = SystemFileSystem.metadataOrNull(path) ?: return
@@ -95,15 +103,11 @@ private fun collectRustPathsRecursive(
     if (metadata.isDirectory) {
         val entries = SystemFileSystem.list(path).sortedBy { it.toString().replace('\\', '/') }
         for (entry in entries) {
-            collectRustPathsRecursive(entry, includeModuleRoots, collected)
+            collectSourcePathsRecursive(entry, acceptFileName, collected)
         }
     } else if (metadata.isRegularFile) {
         val fileName = normalizedPath.substringAfterLast('/')
-        if (includeModuleRoots) {
-            if (fileName.endsWith(".rs", ignoreCase = true)) {
-                collected += normalizedPath
-            }
-        } else if (isTranspilableRustFileName(fileName)) {
+        if (acceptFileName(fileName)) {
             collected += normalizedPath
         }
     }

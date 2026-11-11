@@ -395,7 +395,7 @@ class SingleFileTranslationTest {
         val versionRun = Files("pub const X: u32 = 1;")
         versionRun.run("--version")
         assertEquals(emptyList(), versionRun.reads)
-        assertContains(versionRun.messages.single(), "rust-kotlin 0.1.0")
+        assertContains(versionRun.messages.single(), "kotlin-cpp 0.1.0")
 
         val stdoutRun = Files("use serde_core::de::Visitor;\npub fn ping() -> i32 { 7 }")
         stdoutRun.run(

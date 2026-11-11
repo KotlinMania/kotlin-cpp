@@ -4,7 +4,31 @@ An independent clean copy of `rust-kotlin`, created to extend its existing Kotli
 
 The starting source is `rust-kotlin` commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. The first commit in this repository has the exact same Git tree, with fresh history and no inherited remote.
 
-**Current status:** the copied translator still implements Rust-to-Kotlin. Kotlin input association with the existing `syn-kotlin` / `proc-macro2-kotlin` representations and C++ output are the next implementation work, not completed features. Existing source packages, tests and token/emitter code remain intact. The native executable is named `kotlin-cpp.kexe`.
+**Current status:** Kotlin input now goes through the existing compiler lexer in `proc-macro-kotlin`, the shared `proc-macro2-kotlin` token trees, and new `syn-kotlin` entry points. `tokens` reports lexical correspondences such as `fun` → `Fn` and `when` → `Match`; it does not yet emit C++ or establish semantic equivalence. The inherited Rust-to-Kotlin translator and tests remain intact.
+
+## Native Kotlin token inspection
+
+The source build has fixed Gradle composite dependencies on the sibling `../syn-kotlin` and `../proc-macro-kotlin` checkouts. Their Kotlin-token changes are not published artifacts; no `--include-build` switches or local publication are required.
+
+```sh
+./gradlew stageNativeCliBinary jvmTest
+build/bin/kotlin-cpp tokens ../rust-kotlin/src
+build/bin/kotlin-cpp tokens path/to/File.kt
+```
+
+Directory inputs recurse over `.kt` files in stable sorted order. Inspection writes no source files. Comments and string contents are not keyword candidates; interpolated strings currently remain atomic literals. The shared adapter has regression coverage for nested quotes inside templates, mismatched delimiter kinds and escaped Kotlin identifiers.
+
+## Kotlin round-trip check
+
+```sh
+build/bin/kotlin-cpp roundtrip Input.kt Regenerated.kt
+```
+
+This re-lexes the Kotlin input, associates function syntax with the shared Syn vocabulary, enters the existing standalone Syn parser via that vocabulary's canonical token encoding, and calls the existing Kotlin emitter. The mandatory encoding boundary keeps standalone spans separate from procedural-compiler handles; it is not an alternate engine or fallback. No original Rust input is read or retained.
+
+The command writes a new regenerated file (never overwrites), then requires exact source equality. A formatting/content mismatch exits with an error and leaves the regenerated file available for a real diff. Parse/association failures do not write output. Tests cover function signatures, arithmetic, conditionals, plain strings, multiple functions, and packages, plus changed-input and non-passthrough controls. Imports, classes, local bindings, trivia and templates still require further association work; this is not yet a whole-project round-trip claim.
+
+**Fidelity boundary:** the existing adapter still supplies call-site spans and drops trivia. Shared token `toString()` uses Rust-oriented literal rendering, not a lossless Kotlin round-trip. Source ranges/trivia, Kotlin declaration association, type/control-flow lowering and exact-output C++ fixtures remain necessary before claiming source-faithful translation. Do not use the inspection report as an emitter.
 
 The intended path is to reuse the established Rust → token → Kotlin associations from the Kotlin side, not build a C++ wrapper or a separate replacement parser/helper stack. Acceptance includes deterministic exact-output fixtures and recognizable correspondence with the Kotlin source, alongside compilation and semantic tests.
 

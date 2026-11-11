@@ -4,16 +4,22 @@ import io.github.kotlinmania.io.files.SystemFileSystem
 import io.github.kotlinmania.io.files.Path as KmPath
 
 internal const val CLI_VERSION_TEXT: String =
-    "rust-kotlin 0.1.0 (proc-macro2-kotlin 0.1.8, syn-kotlin 0.5.0)"
+    "kotlin-cpp 0.1.0 (proc-macro2-kotlin 0.1.8, syn-kotlin 0.5.0)"
 
 internal val CLI_USAGE_TEXT: String =
     """
-    rust-kotlin: deterministic Rust-to-Kotlin translator (1 .rs file -> 1 .kt file)
+    kotlin-cpp: Kotlin token inspection and inherited Rust-to-Kotlin reference translation
     Usage:
-      rust-kotlin inspect [options] <input.rs | dir...>
-      rust-kotlin translate [options] <input.rs> <output.kt>
-      rust-kotlin [translate] [options] <input.rs | dir...>
-      rust-kotlin --help | --version
+      kotlin-cpp tokens <input.kt | source directory...>
+      kotlin-cpp roundtrip <input.kt> <regenerated.kt>
+      kotlin-cpp inspect [options] <input.rs | dir...>
+      kotlin-cpp translate [options] <input.rs> <output.kt>
+      kotlin-cpp [translate] [options] <input.rs | dir...>
+      kotlin-cpp --help | --version
+
+    tokens reports lexical Syn associations; it does not yet emit C++ or resolve Kotlin semantics.
+    roundtrip regenerates through the existing Syn/Kotlin pipeline and requires exact equality.
+    A mismatch keeps the regenerated file for inspection and exits with an error.
 
     Options:
       -r, --recursive                  Recursively translate/inspect .rs files in directories (skips lib.rs and mod.rs)
@@ -112,6 +118,22 @@ internal fun runSingleFileCommand(
         discoverCrateRawAbiMetadataFromDisk(inp, root, raw, split, TranslationSession.finalStructs)
     },
 ) {
+    if (args.firstOrNull() == "roundtrip") {
+        require(args.size == 3 && args[1].endsWith(".kt") && args[2].endsWith(".kt")) {
+            "usage: kotlin-cpp roundtrip <input.kt> <regenerated.kt>"
+        }
+        require(args[1] != args[2]) { "roundtrip output must not replace its input" }
+        val original = read(args[1])
+        val regenerated = renderKotlinRoundTrip(original)
+        write(args[2], regenerated.text)
+        require(original == regenerated.text) { "roundtrip mismatch; regenerated Kotlin written to ${args[2]}" }
+        report("roundtrip\t${args[1]}\t${args[2]}\tMATCH")
+        return
+    }
+    if (args.firstOrNull() == "tokens") {
+        inspectKotlinTokens(args.drop(1), read, isDirectory, report)
+        return
+    }
     val parsed = parseCliOptions(args)
     when (parsed.action) {
         CliActionKind.HELP -> {

@@ -13,12 +13,12 @@ private fun reportFatalErrorAndExit(message: String): Nothing {
     exitProcess(2)
 }
 
-/** Native CLI entry point: deterministic Rust-to-Kotlin translator. */
+/** Native CLI entry point for Kotlin token inspection and reference translation. */
 public fun main(args: Array<String>) {
     try {
         runSingleFileCommand(args)
     } catch (error: Exception) {
-        reportFatalErrorAndExit("rust-kotlin: ${error.message}\n")
+        reportFatalErrorAndExit("kotlin-cpp: ${error.message}\n")
     } finally {
         TranslationSession.clear()
     }
