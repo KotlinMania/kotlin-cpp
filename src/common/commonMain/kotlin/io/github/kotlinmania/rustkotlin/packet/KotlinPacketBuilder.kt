@@ -83,7 +83,26 @@ private class KotlinPacketStreamBuilder(
             }
 
             val text = source.substring(start, end)
-            val parentNode = tree.getParent(LightNode(-(tokenIdx + 1)))
+            var parentNode = tree.getParent(LightNode(-(tokenIdx + 1)))
+            var effectiveType = type
+            if (parentNode != null &&
+                tree.isComposite(parentNode) &&
+                KtNodeTypes.getElementTypeId(tree.getType(parentNode)) == 0
+            ) {
+                val collapsedType = tree.getType(parentNode)
+                if (tree.getStartOffset(parentNode) == start &&
+                    tree.getEndOffset(parentNode) == end &&
+                    KtTokens.getElementTypeId(collapsedType) != 0
+                ) {
+                    effectiveType = collapsedType
+                }
+                while (parentNode != null &&
+                    tree.isComposite(parentNode) &&
+                    KtNodeTypes.getElementTypeId(tree.getType(parentNode)) == 0
+                ) {
+                    parentNode = tree.getParent(parentNode)
+                }
+            }
             val parentTypeId =
                 if (parentNode != null && tree.isComposite(parentNode)) {
                     KtNodeTypes.getElementTypeId(tree.getType(parentNode))
@@ -91,7 +110,7 @@ private class KotlinPacketStreamBuilder(
                     0
                 }
 
-            val packet = classifyTokenPacket(nextPacketIdx, type, parentTypeId, span, text)
+            val packet = classifyTokenPacket(nextPacketIdx, effectiveType, parentTypeId, span, text)
             rawPackets.add(packet)
             tokenToPacketIndex[tokenIdx] = nextPacketIdx
             nextPacketIdx += 1
@@ -578,6 +597,7 @@ private class KotlinPacketStreamBuilder(
         val lightChildren = tree.getChildren(node)
         for (child in lightChildren) {
             if (!tree.isComposite(child)) continue
+            if (KtNodeTypes.getElementTypeId(tree.getType(child)) == 0) continue
             val childStart = tree.getStartOffset(child)
             val childEnd = tree.getEndOffset(child)
             val (cFirst, cLast) = packetRangeForOffsets(childStart, childEnd)
