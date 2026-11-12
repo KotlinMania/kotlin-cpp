@@ -11,7 +11,7 @@ public data class FrameSemanticInfo(
 )
 
 /**
- * Hierarchical syntax production slice `[firstPacketIndex..lastPacketIndex]` overlaid
+ * Hierarchical syntax production slice (`firstPacketIndex..lastPacketIndex`) overlaid
  * on a [PacketStream] without copying or stripping trivia packets.
  *
  * Child node references use the exact signed-integer encoding of `LightSyntaxTree`:
