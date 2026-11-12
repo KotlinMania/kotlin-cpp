@@ -14,6 +14,7 @@ changelog = "2.5.0"
 intellijPlatform = "2.19.0"
 junit = "4.13.2"
 kmIo = "0.4.0"
+antlr4Kotlin = "0.2.1"
 libcKotlin = "0.1.13"
 windowsSysKotlin = "0.1.2"
 serdeJsonKotlin = "0.2.0"
@@ -48,6 +49,7 @@ kotlinx-benchmark-runtime = { module = "org.jetbrains.kotlinx:kotlinx-benchmark-
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 junit = { module = "junit:junit", version.ref = "junit" }
 km-io = { module = "io.github.kotlinmania:km-io", version.ref = "kmIo" }
+antlr4-kotlin = { module = "io.github.kotlinmania:antlr4-kotlin", version.ref = "antlr4Kotlin" }
 libc-kotlin = { module = "io.github.kotlinmania:libc-kotlin", version.ref = "libcKotlin" }
 windows-sys-kotlin = { module = "io.github.kotlinmania:windows-sys-kotlin", version.ref = "windowsSysKotlin" }
 serde-json-kotlin = { module = "io.github.kotlinmania:serde-json-kotlin", version.ref = "serdeJsonKotlin" }
@@ -60,8 +62,16 @@ num-bigint-kotlin = { module = "io.github.kotlinmania:num-bigint-kotlin", versio
 serde-derive = { module = "io.github.kotlinmania:serde-derive", version.ref = "serdeDerive" }
 
 [bundles]
+kotlin-cpp-commonMain = [
+  "km-io",
+  "antlr4-kotlin",
+  "proc-macro-kotlin",
+  "proc-macro2-kotlin",
+  "syn-kotlin",
+]
 rust-kotlin-commonMain = [
   "km-io",
+  "antlr4-kotlin",
   "serde-json-kotlin",
   "proc-macro-kotlin",
   "proc-macro2-kotlin",
