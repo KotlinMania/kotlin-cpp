@@ -1,7 +1,6 @@
 // Generated from KotlinParser.g4 by ANTLR 4.13.2
 package io.github.kotlinmania.kotlincpp.grammar
 
-import io.github.kotlinmania.antlr4.EarlyExitException
 import io.github.kotlinmania.antlr4.Parser
 import io.github.kotlinmania.antlr4.ParserRuleContext
 import io.github.kotlinmania.antlr4.Token
