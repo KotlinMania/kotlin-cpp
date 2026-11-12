@@ -411,22 +411,18 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 state = 402
                 match(Tokens.ShebangLine)
                 state = 404
-                var cnt90 = 0
-                loop81@ while (true) {
-                    altChoice = adaptivePredict(8)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 403
                             match(Tokens.NL)
                         }
-                        else -> {
-                            if (cnt90 >= 1) break@loop81
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt90++
                     state = 406
-                }
+                    altChoice = adaptivePredict(8)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -665,8 +661,7 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                         state = 457
                         importAlias()
                     }
-                    Token.EOF, Tokens.NL, Tokens.LPAREN, Tokens.LSQUARE, Tokens.LCURL, Tokens.ADD, Tokens.SUB, Tokens.INCR, Tokens.DECR, Tokens.EXCL_WS, Tokens.EXCL_NO_WS, Tokens.SEMICOLON, Tokens.COLONCOLON, Tokens.AT_NO_WS, Tokens.AT_PRE_WS, Tokens.RETURN_AT, Tokens.CONTINUE_AT, Tokens.BREAK_AT, Tokens.THIS_AT, Tokens.SUPER_AT, Tokens.FILE, Tokens.FIELD, Tokens.PROPERTY, Tokens.GET, Tokens.SET, Tokens.RECEIVER, Tokens.PARAM, Tokens.SETPARAM, Tokens.DELEGATE, Tokens.IMPORT, Tokens.CLASS, Tokens.INTERFACE, Tokens.FUN, Tokens.OBJECT, Tokens.VAL, Tokens.VAR, Tokens.TYPE_ALIAS, Tokens.CONSTRUCTOR, Tokens.BY, Tokens.COMPANION, Tokens.INIT, Tokens.THIS, Tokens.SUPER, Tokens.WHERE, Tokens.IF, Tokens.WHEN, Tokens.TRY, Tokens.CATCH, Tokens.FINALLY, Tokens.FOR, Tokens.DO, Tokens.WHILE, Tokens.THROW, Tokens.RETURN, Tokens.CONTINUE, Tokens.BREAK, Tokens.OUT, Tokens.DYNAMIC, Tokens.PUBLIC, Tokens.PRIVATE, Tokens.PROTECTED, Tokens.INTERNAL, Tokens.ENUM, Tokens.SEALED, Tokens.ANNOTATION, Tokens.DATA, Tokens.INNER, Tokens.VALUE, Tokens.TAILREC, Tokens.OPERATOR, Tokens.INLINE, Tokens.INFIX, Tokens.EXTERNAL, Tokens.SUSPEND, Tokens.OVERRIDE, Tokens.ABSTRACT, Tokens.FINAL, Tokens.OPEN, Tokens.CONST, Tokens.LATEINIT, Tokens.VARARG, Tokens.NOINLINE, Tokens.CROSSINLINE, Tokens.REIFIED, Tokens.EXPECT, Tokens.ACTUAL, Tokens.RealLiteral, Tokens.IntegerLiteral, Tokens.HexLiteral, Tokens.BinLiteral, Tokens.UnsignedLiteral, Tokens.LongLiteral, Tokens.BooleanLiteral, Tokens.NullLiteral, Tokens.CharacterLiteral, Tokens.Identifier, Tokens.QUOTE_OPEN, Tokens.TRIPLE_QUOTE_OPEN -> {}
-                    else -> throwNoViableAlt()
+                    else -> {}
                 }
                 state = 461
                 altChoice = adaptivePredict(18)
@@ -4561,22 +4556,18 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                     laToken = tokenStream.LA(1)
                 }
                 state = 1731
-                var cnt2203 = 0
-                loop1572@ while (true) {
-                    altChoice = adaptivePredict(250)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 1730
                             quest()
                         }
-                        else -> {
-                            if (cnt2203 >= 1) break@loop1572
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt2203++
                     state = 1733
-                }
+                    altChoice = adaptivePredict(250)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -4807,22 +4798,18 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 1775
-                var cnt2281 = 0
-                loop1645@ while (true) {
-                    altChoice = adaptivePredict(258)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 1774
                             typeProjectionModifier()
                         }
-                        else -> {
-                            if (cnt2281 >= 1) break@loop1645
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt2281++
                     state = 1777
-                }
+                    altChoice = adaptivePredict(258)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -5472,15 +5459,19 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 enterOuterAlt(localCtx, 1)
                 state = 1959
                 altChoice = adaptivePredict(292)
-                while (altChoice != 3 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    when (altChoice) {
-                        1 -> {
-                            state = 1955
-                            label()
-                        }
-                        2 -> {
-                            state = 1956
-                            annotation()
+                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
+                    if (altChoice == 1) {
+                        state = 1957
+                        when (adaptivePredict(291)) {
+                            1 -> {
+                                state = 1955
+                                label()
+                            }
+                            2 -> {
+                                state = 1956
+                                annotation()
+                            }
+                            else -> throwNoViableAlt()
                         }
                     }
                     state = 1961
@@ -6123,9 +6114,8 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 2102
-                var cnt2824 = 0
-                loop2109@ while (true) {
-                    altChoice = adaptivePredict(314)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 2101
@@ -6138,14 +6128,11 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                                 consume()
                             }
                         }
-                        else -> {
-                            if (cnt2824 >= 1) break@loop2109
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt2824++
                     state = 2104
-                }
+                    altChoice = adaptivePredict(314)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -6515,37 +6502,41 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 elvisExpression()
                 state = 2206
                 altChoice = adaptivePredict(329)
-                while (altChoice != 3 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    when (altChoice) {
-                        1 -> {
-                            state = 2186
-                            inOperator()
-                            state = 2190
-                            altChoice = adaptivePredict(326)
-                            while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                                if (altChoice == 1) {
-                                    state = 2187
-                                    match(Tokens.NL)
-                                }
-                                state = 2192
+                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
+                    if (altChoice == 1) {
+                        state = 2204
+                        when (adaptivePredict(328)) {
+                            1 -> {
+                                state = 2186
+                                inOperator()
+                                state = 2190
                                 altChoice = adaptivePredict(326)
+                                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
+                                    if (altChoice == 1) {
+                                        state = 2187
+                                        match(Tokens.NL)
+                                    }
+                                    state = 2192
+                                    altChoice = adaptivePredict(326)
+                                }
+                                state = 2193
+                                elvisExpression()
                             }
-                            state = 2193
-                            elvisExpression()
-                        }
-                        2 -> {
-                            state = 2195
-                            isOperator()
-                            state = 2199
-                            laToken = tokenStream.LA(1)
-                            while (laToken == Tokens.NL) {
-                                state = 2196
-                                match(Tokens.NL)
-                                state = 2201
+                            2 -> {
+                                state = 2195
+                                isOperator()
+                                state = 2199
                                 laToken = tokenStream.LA(1)
+                                while (laToken == Tokens.NL) {
+                                    state = 2196
+                                    match(Tokens.NL)
+                                    state = 2201
+                                    laToken = tokenStream.LA(1)
+                                }
+                                state = 2202
+                                `type`()
                             }
-                            state = 2202
-                            `type`()
+                            else -> throwNoViableAlt()
                         }
                     }
                     state = 2208
@@ -8457,15 +8448,19 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 match(Tokens.QUOTE_OPEN)
                 state = 2692
                 altChoice = adaptivePredict(406)
-                while (altChoice != 3 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    when (altChoice) {
-                        1 -> {
-                            state = 2688
-                            lineStringContent()
-                        }
-                        2 -> {
-                            state = 2689
-                            lineStringExpression()
+                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
+                    if (altChoice == 1) {
+                        state = 2690
+                        when (adaptivePredict(405)) {
+                            1 -> {
+                                state = 2688
+                                lineStringContent()
+                            }
+                            2 -> {
+                                state = 2689
+                                lineStringExpression()
+                            }
+                            else -> throwNoViableAlt()
                         }
                     }
                     state = 2694
@@ -8516,19 +8511,23 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 match(Tokens.TRIPLE_QUOTE_OPEN)
                 state = 2703
                 altChoice = adaptivePredict(408)
-                while (altChoice != 4 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    when (altChoice) {
-                        1 -> {
-                            state = 2698
-                            multiLineStringContent()
-                        }
-                        2 -> {
-                            state = 2699
-                            multiLineStringExpression()
-                        }
-                        3 -> {
-                            state = 2700
-                            match(Tokens.MultiLineStringQuote)
+                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
+                    if (altChoice == 1) {
+                        state = 2701
+                        when (adaptivePredict(407)) {
+                            1 -> {
+                                state = 2698
+                                multiLineStringContent()
+                            }
+                            2 -> {
+                                state = 2699
+                                multiLineStringExpression()
+                            }
+                            3 -> {
+                                state = 2700
+                                match(Tokens.MultiLineStringQuote)
+                            }
+                            else -> throwNoViableAlt()
                         }
                     }
                     state = 2705
@@ -10221,9 +10220,8 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 when (altChoice) {
                     1 -> {
                         state = 3242
-                        var cnt4568 = 0
-                        loop3535@ while (true) {
-                            altChoice = adaptivePredict(501)
+                        altChoice = 1
+                        do {
                             when (altChoice) {
                                 1 -> {
                                     state = 3238
@@ -10237,14 +10235,11 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                                     state = 3241
                                     catchBlock()
                                 }
-                                else -> {
-                                    if (cnt4568 >= 1) break@loop3535
-                                    throwRecognitionException(EarlyExitException(this))
-                                }
+                                else -> throwNoViableAlt()
                             }
-                            cnt4568++
                             state = 3244
-                        }
+                            altChoice = adaptivePredict(501)
+                        } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
                         state = 3253
                         altChoice = adaptivePredict(503)
                         when (altChoice) {
@@ -11166,26 +11161,28 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 3393
-                var cnt4895 = 0
-                loop3896@ while (true) {
-                    altChoice = adaptivePredict(524)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
-                            state = 3391
-                            annotation()
+                            state = 3393
+                            when (adaptivePredict(523)) {
+                                1 -> {
+                                    state = 3391
+                                    annotation()
+                                }
+                                2 -> {
+                                    state = 3392
+                                    modifier()
+                                }
+                                else -> throwNoViableAlt()
+                            }
                         }
-                        2 -> {
-                            state = 3392
-                            modifier()
-                        }
-                        else -> {
-                            if (cnt4895 >= 1) break@loop3896
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt4895++
                     state = 3395
-                }
+                    altChoice = adaptivePredict(524)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -11218,26 +11215,28 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 3399
-                var cnt4907 = 0
-                loop3911@ while (true) {
-                    altChoice = adaptivePredict(526)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
-                            state = 3397
-                            annotation()
+                            state = 3399
+                            when (adaptivePredict(525)) {
+                                1 -> {
+                                    state = 3397
+                                    annotation()
+                                }
+                                2 -> {
+                                    state = 3398
+                                    parameterModifier()
+                                }
+                                else -> throwNoViableAlt()
+                            }
                         }
-                        2 -> {
-                            state = 3398
-                            parameterModifier()
-                        }
-                        else -> {
-                            if (cnt4907 >= 1) break@loop3911
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt4907++
                     state = 3401
-                }
+                    altChoice = adaptivePredict(526)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -11355,22 +11354,18 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 3420
-                var cnt4949 = 0
-                loop3961@ while (true) {
-                    altChoice = adaptivePredict(529)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 3419
                             typeModifier()
                         }
-                        else -> {
-                            if (cnt4949 >= 1) break@loop3961
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt4949++
                     state = 3422
-                }
+                    altChoice = adaptivePredict(529)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
@@ -11607,22 +11602,18 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 3443
-                var cnt5014 = 0
-                loop4057@ while (true) {
-                    altChoice = adaptivePredict(532)
+                altChoice = 1
+                do {
                     when (altChoice) {
                         1 -> {
                             state = 3442
                             typeParameterModifier()
                         }
-                        else -> {
-                            if (cnt5014 >= 1) break@loop4057
-                            throwRecognitionException(EarlyExitException(this))
-                        }
+                        else -> throwNoViableAlt()
                     }
-                    cnt5014++
                     state = 3445
-                }
+                    altChoice = adaptivePredict(532)
+                } while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER)
             }
         } finally {
             exitRule()
