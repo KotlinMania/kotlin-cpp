@@ -97,11 +97,11 @@ internal object KotlinPacketLexing {
         var tokIdx = 0
         while (tokIdx < nonEofCount) {
             val tok = sourceTokens[tokIdx]
-            val text = tok.text ?: ""
+            val text = tok.text.orEmpty()
             val pairedOpId = marks.pairedSecondOperatorId[tokIdx]
             if (pairedOpId != 0 && tokIdx + 1 < nonEofCount) {
                 val secondTok = sourceTokens[tokIdx + 1]
-                val secondText = secondTok.text ?: ""
+                val secondText = secondTok.text.orEmpty()
                 if (secondTok.type == KotlinLexer.Tokens.EXCL_WS && secondText.length > 1) {
                     val opText = text + "!"
                     val opStart = utf16Cursor
@@ -306,7 +306,7 @@ internal object KotlinPacketLexing {
                         val line = sym?.line ?: 1
                         val col = (sym?.charPositionInLine ?: 0) + 1
                         throw IllegalArgumentException(
-                            "$sourcePath:$line:$col: unexpected token '${sym?.text ?: ""}'",
+                            "$sourcePath:$line:$col: unexpected token '${sym?.text.orEmpty()}'",
                         )
                     }
                     is ParserRuleContext -> visit(child)
@@ -334,7 +334,7 @@ internal object KotlinPacketLexing {
         rawCoreFirst: IntArray,
         rawCoreLast: IntArray,
     ) {
-        val text = tok.text ?: ""
+        val text = tok.text.orEmpty()
         val tokEndUtf16 = tokStartUtf16 + text.length
         val type = tok.type
 
