@@ -661,7 +661,7 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                         state = 457
                         importAlias()
                     }
-                    else -> {}
+                    else -> Unit
                 }
                 state = 461
                 altChoice = adaptivePredict(18)
@@ -14720,7 +14720,7 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
                 serializedAtnChunk16(),
             ),
         )
-        val SERIALIZED_ATN: String = run {
+        val SERIALIZED_ATN: String by lazy {
             val list = IntegerList(SERIALIZED_ATN_INTS.size)
             list.addAll(SERIALIZED_ATN_INTS)
             val words16 = ATNDeserializer.encodeIntsWith16BitWords(list)

@@ -2129,7 +2129,7 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
                 serializedAtnChunk11(),
             ),
         )
-        val SERIALIZED_ATN: String = run {
+        val SERIALIZED_ATN: String by lazy {
             val list = IntegerList(SERIALIZED_ATN_INTS.size)
             list.addAll(SERIALIZED_ATN_INTS)
             val words16 = ATNDeserializer.encodeIntsWith16BitWords(list)
