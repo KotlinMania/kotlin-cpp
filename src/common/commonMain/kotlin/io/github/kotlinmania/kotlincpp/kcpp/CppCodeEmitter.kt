@@ -893,6 +893,7 @@ private class CppDeclarationRenderer(
         declFrame: PacketFrame,
         qualifierPrefix: String,
         indent: String,
+        outOfLineOwnerQual: String? = null,
     ): String {
         val cls = symbols.classesByFrame[declFrame.frameIndex] ?: return ""
         return when (cls.kind) {
@@ -908,15 +909,15 @@ private class CppDeclarationRenderer(
             KtClassKind.RICH_ENUM ->
                 renderRichEnum(declFrame, cls, indent)
             KtClassKind.VALUE_CLASS ->
-                if (isHeaderMode) renderValueClass(declFrame, cls, indent) else ""
+                if (isHeaderMode) renderValueClass(declFrame, cls, indent, outOfLineOwnerQual) else ""
             KtClassKind.DATA_CLASS ->
-                if (isHeaderMode) renderDataClass(declFrame, cls, indent) else ""
+                if (isHeaderMode) renderDataClass(declFrame, cls, qualifierPrefix, indent, outOfLineOwnerQual) else ""
             KtClassKind.INTERFACE,
             KtClassKind.SEALED_CLASS,
             KtClassKind.REGULAR_CLASS,
             KtClassKind.OBJECT_SINGLETON,
             KtClassKind.COMPANION_OBJECT,
-            -> renderGeneralClass(declFrame, cls, qualifierPrefix, indent)
+            -> renderGeneralClass(declFrame, cls, qualifierPrefix, indent, outOfLineOwnerQual)
         }
     }
 
@@ -1036,6 +1037,7 @@ private class CppDeclarationRenderer(
         declFrame: PacketFrame,
         cls: KtClassSymbol,
         indent: String,
+        outOfLineOwnerQual: String? = null,
     ): String {
         val underlyingParam = cls.primaryConstructorParams.firstOrNull()
         val valType =
@@ -1044,12 +1046,13 @@ private class CppDeclarationRenderer(
             } ?: "std::int64_t"
         val propName = underlyingParam?.cppName ?: "value"
         val fieldName = CppNamingPolicy.toPrivateFieldName(propName)
+        val headName = if (outOfLineOwnerQual != null) "$outOfLineOwnerQual::${cls.cppName}" else cls.cppName
         includes.addSystem("utility")
 
         return buildString {
             append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(cls.typeParams, indent))
-            append(indent).append("class ").append(cls.cppName).append(" {\n")
+            append(indent).append("class ").append(headName).append(" {\n")
             append(indent).append("private:\n")
             append(indent).append("    ").append(valType).append(' ').append(fieldName).append(";\n")
             append(indent).append("public:\n")
@@ -1070,17 +1073,21 @@ private class CppDeclarationRenderer(
     private fun renderDataClass(
         declFrame: PacketFrame,
         cls: KtClassSymbol,
+        qualifierPrefix: String,
         indent: String,
+        outOfLineOwnerQual: String? = null,
     ): String {
         includes.addSystem("string")
         includes.addSystem("utility")
+        val fullQual = if (qualifierPrefix.isEmpty()) cls.cppName else "$qualifierPrefix::${cls.cppName}"
+        val headName = if (outOfLineOwnerQual != null) "$outOfLineOwnerQual::${cls.cppName}" else cls.cppName
         val inheritance = renderInheritanceClause(cls)
         val inner = "$indent    "
 
         return buildString {
             append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(cls.typeParams, indent))
-            append(indent).append("class ").append(cls.cppName).append(inheritance).append(" {\n")
+            append(indent).append("class ").append(headName).append(inheritance).append(" {\n")
             append(indent).append("public:\n")
 
             val paramTypes = ArrayList<String>(cls.primaryConstructorParams.size)
@@ -1147,7 +1154,7 @@ private class CppDeclarationRenderer(
                 if (rendered.isNotBlank()) append('\n').append(rendered)
             }
             for (mFnIdx in cls.memberFunctionFrameIndices) {
-                val rendered = renderFunction(stream.frames[mFnIdx], cls, cls.cppName, inner)
+                val rendered = renderFunction(stream.frames[mFnIdx], cls, fullQual, inner)
                 if (rendered.isNotBlank()) append('\n').append(rendered)
             }
             append(indent).append("};\n")
@@ -1159,8 +1166,11 @@ private class CppDeclarationRenderer(
         cls: KtClassSymbol,
         qualifierPrefix: String,
         indent: String,
+        outOfLineOwnerQual: String? = null,
     ): String {
         val fullQual = if (qualifierPrefix.isEmpty()) cls.cppName else "$qualifierPrefix::${cls.cppName}"
+        val headName = if (outOfLineOwnerQual != null) "$outOfLineOwnerQual::${cls.cppName}" else cls.cppName
+        val currentScopeQualForNested = headName
         val emitCtorInCpp = PacketFlags.hasFlag(cls.flags, PacketFlags.EMIT_IN_CPP_BODY)
 
         if (!isHeaderMode) {
@@ -1217,7 +1227,7 @@ private class CppDeclarationRenderer(
         return buildString {
             append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(cls.typeParams, indent))
-            append(indent).append("class ").append(cls.cppName).append(inheritance).append(" {\n")
+            append(indent).append("class ").append(headName).append(inheritance).append(" {\n")
 
             // Private fields first (`snake_case_`)
             val privateCtorProps =
@@ -1248,6 +1258,7 @@ private class CppDeclarationRenderer(
             append(indent).append("public:\n")
             if (isPolymorphicBase) {
                 append(inner).append("virtual ~").append(cls.cppName).append("() = default;\n")
+                append(inner).append("bool operator==(const ").append(cls.cppName).append("&) const = default;\n")
             }
 
             if (cls.kind == KtClassKind.OBJECT_SINGLETON) {
@@ -1297,18 +1308,41 @@ private class CppDeclarationRenderer(
                     append(" {}\n")
                 }
                 if (cls.kind == KtClassKind.SEALED_CLASS) {
+                    append(inner).append(cls.cppName).append("(const ").append(cls.cppName).append("&) = default;\n")
+                    append(inner).append(cls.cppName).append('(').append(cls.cppName).append("&&) = default;\n")
+                    append(inner).append(cls.cppName).append("& operator=(const ").append(cls.cppName).append("&) = default;\n")
+                    append(inner).append(cls.cppName).append("& operator=(").append(cls.cppName).append("&&) = default;\n")
                     append(indent).append("public:\n")
                 }
             } else if (cls.kind == KtClassKind.SEALED_CLASS) {
                 append(indent).append("protected:\n")
                 append(inner).append(cls.cppName).append("() = default;\n")
+                append(inner).append(cls.cppName).append("(const ").append(cls.cppName).append("&) = default;\n")
+                append(inner).append(cls.cppName).append('(').append(cls.cppName).append("&&) = default;\n")
+                append(inner).append(cls.cppName).append("& operator=(const ").append(cls.cppName).append("&) = default;\n")
+                append(inner).append(cls.cppName).append("& operator=(").append(cls.cppName).append("&&) = default;\n")
                 append(indent).append("public:\n")
             }
 
-            // Nested classes (excluding `Companion`, whose members lift directly as `static` onto enclosing class!)
+            // Nested classes (defer subclasses that inherit from `cls` until after `cls` is complete!)
+            val deferredOutOfLineNested = ArrayList<Int>()
             for (nestedIdx in cls.memberClassFrameIndices) {
-                val rendered = renderClassOrObject(stream.frames[nestedIdx], fullQual, inner)
-                if (rendered.isNotBlank()) append('\n').append(rendered)
+                val nestedCls = symbols.classesByFrame[nestedIdx]
+                if (nestedCls != null && inheritsFromEnclosing(nestedCls, cls)) {
+                    append('\n')
+                    append(renderTemplatePrefix(nestedCls.typeParams, inner))
+                    val kw =
+                        if (nestedCls.kind == KtClassKind.SIMPLE_ENUM || nestedCls.kind == KtClassKind.RICH_ENUM) {
+                            "enum class"
+                        } else {
+                            "class"
+                        }
+                    append(inner).append(kw).append(' ').append(nestedCls.cppName).append(";\n")
+                    deferredOutOfLineNested.add(nestedIdx)
+                } else {
+                    val rendered = renderClassOrObject(stream.frames[nestedIdx], fullQual, inner)
+                    if (rendered.isNotBlank()) append('\n').append(rendered)
+                }
             }
 
             // Companion object constants and static factories lifted onto the class
@@ -1340,8 +1374,31 @@ private class CppDeclarationRenderer(
             }
 
             append(indent).append("};\n")
+
+            for (deferredIdx in deferredOutOfLineNested) {
+                val rendered =
+                    renderClassOrObject(
+                        declFrame = stream.frames[deferredIdx],
+                        qualifierPrefix = fullQual,
+                        indent = indent,
+                        outOfLineOwnerQual = currentScopeQualForNested,
+                    )
+                if (rendered.isNotBlank()) {
+                    append('\n').append(rendered)
+                }
+            }
         }
     }
+
+    private fun inheritsFromEnclosing(
+        nestedCls: KtClassSymbol,
+        enclosingCls: KtClassSymbol,
+    ): Boolean =
+        nestedCls.superTypeFrameIndices.any { trIdx ->
+            val rawBase = bundle.typeTranslator.translateTypeFrame(stream.frames[trIdx], CppTypePosition.TYPE_ARGUMENT)
+            val simpleBase = rawBase.substringBefore('<').substringAfterLast("::").trim()
+            simpleBase == enclosingCls.cppName || simpleBase == enclosingCls.kotlinName
+        }
 
     private fun renderInheritanceClause(cls: KtClassSymbol): String {
         if (cls.superTypeFrameIndices.isEmpty()) return ""
