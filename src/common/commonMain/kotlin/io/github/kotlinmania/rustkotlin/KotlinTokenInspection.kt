@@ -65,14 +65,17 @@ internal fun inspectKotlinTokens(
 ) {
     require(inputs.isNotEmpty()) { "usage: kotlin-cpp tokens <input.kt | source directory...>" }
     require(inputs.none { it.startsWith("-") }) { "tokens accepts Kotlin files and source directories, not options" }
-    val files = inputs.flatMap { input ->
-        if (isDirectory(input)) {
-            collectKotlinFilePaths(listOf(input))
-        } else {
-            require(input.endsWith(".kt", ignoreCase = true)) { "not a Kotlin source file: $input" }
-            listOf(input)
-        }
-    }.distinct().sorted()
+    val files =
+        inputs
+            .flatMap { input ->
+                if (isDirectory(input)) {
+                    collectKotlinFilePaths(listOf(input))
+                } else {
+                    require(input.endsWith(".kt", ignoreCase = true)) { "not a Kotlin source file: $input" }
+                    listOf(input)
+                }
+            }.distinct()
+            .sorted()
     require(files.isNotEmpty()) { "no Kotlin source files found" }
     for (path in files) {
         val result = parseKotlinTokenStream(read(path))
