@@ -1,183 +1,46 @@
 # kotlin-cpp
 
-An independent clean copy of `rust-kotlin`, created to extend its existing KotlinMania token and emission machinery toward source-faithful Kotlin-to-C++ transliteration.
+Deterministic, purely language-level **Kotlin-to-C++23** mechanical transliterator and lossless Kotlin `PacketStream` round-trip engine (`io.github.kotlinmania.kotlincpp`).
 
-The starting source is `rust-kotlin` commit `8ef4cdadcc5129096cc4f5ac55cf168f360edf0f`. The first commit in this repository has the exact same Git tree, with fresh history and no inherited remote.
+`kotlin-cpp` parses Kotlin `.kt` source files through KotlinMania's pure-KMP `antlr4-kotlin` specification grammar (`KotlinLexer` + `KotlinParser`), attaches universal `syn-kotlin` (`io.github.kotlinmania.syn.token.*`) and `proc-macro2-kotlin` (`TokenStream` / `TokenTree`) representations to every significant packet, proves a byte-exact Kotlin → `PacketStream` → Kotlin round-trip, and lowers the structured `PacketStream` through a 6-pass **C++23** pipeline into co-located `.hpp` / `.cpp` files (plus optional `@CName` C ABI `.h` / `.def` companions).
 
-**Current status:** Kotlin input now goes through the existing compiler lexer in `proc-macro-kotlin`, the shared `proc-macro2-kotlin` token trees, and new `syn-kotlin` entry points. `tokens` reports lexical correspondences such as `fun` → `Fn` and `when` → `Match`; it does not yet emit C++ or establish semantic equivalence. The inherited Rust-to-Kotlin translator and tests remain intact.
+## Architecture
 
-## Native Kotlin token inspection
+1. **ANTLR4 Specification Frontend + Universal `syn-kotlin` Packet Stream (`io.github.kotlinmania.kotlincpp.packet`)**:
+   - Pure-KMP `KotlinLexer` and `KotlinParser` (generated via `antlr4-kotlin`) produce an exact partition of UTF-16 / UTF-8 spans, comments, KDoc `[link]` spans, `// port-lint:` directives, string template segments, and balanced `<T>` / `{...}` / `(...)` / `[...]` delimiter pairs.
+   - `UniversalSynTokenAssociation` attaches canonical `syn-kotlin` `Token` instances (`fun` → `Token![fn]`, `suspend` → `Token![async]`, `val`/`var` → `Token![let]`, `when` → `Token![match]`, `?:` → `Token![?]+Token![:]`, etc.) and builds hierarchical `proc-macro2-kotlin` `TokenStream` trees.
+   - `KotlinPacketEmitter` (`renderKotlinRoundTrip`) regenerates canonical Kotlin directly from `PacketStream` to verify lossless "like-for-like" structural fidelity.
 
-The source build has fixed Gradle composite dependencies on the sibling `../syn-kotlin` and `../proc-macro-kotlin` checkouts. Their Kotlin-token changes are not published artifacts; no `--include-build` switches or local publication are required.
+2. **6-Pass Deterministic C++23 Transliterator (`io.github.kotlinmania.kotlincpp.kcpp`)**:
+   - **Pass 1 (`SameFileSymbolPass`)**: Same-file declaration/type/callable table & forward-declaration discovery.
+   - **Pass 2 (`SuspendStateMachinePass`)**: `FirSuspendCallChecker` validation, dual-ABI `[[clang::annotate("suspend")]]` continuation pairs, inline-lambda expansion, left-to-right argument hoisting before suspend points, and IIFE-free control-flow hoisting.
+   - **Pass 3 (`GcAndOwnershipPass`)**: Standalone RAII (`CppGcMode.NONE`) or Kotlin/Native Docking-Ring GC (`CppGcMode.KONAN_GC`) stack `ObjHolder` roots, cross-suspend `OwningExternalRCRef` spills with dead-slot `.reset()`, `CalledFromNativeGuard`, and `Kotlin_mm_UpdateHeapRef` barriers.
+   - **Pass 4 (`AtomicAndThreadLocalPass`)**: `kotlinx.atomicfu` fields, lvalue-safe `compare_exchange_strong` / `Kotlin_mm_CompareAndSetVolatileHeapRef`, `.loop { ... }` lowering, and `ThreadLocal<T>`.
+   - **Pass 5 (`FfiAndCTypePass`)**: `@InlineCpp` / `inlineCpp(...)`, `kotlinx.cinterop` (`CPointer`, `memScoped`, `alloc`, `usePinned` with compile-time cross-suspend pin rejection), and `@CName` `extern "C"` + companion `<Stem>_c_api.h` / `<Stem>.def` generation.
+   - **Pass 6 (`ControlFlowAndTypePass` + `CppCodeEmitter`)**: Co-located C++23 `.hpp` / `.cpp` emission (`operator[](r, c)`, `std::unreachable()`, `sealed class` / `data class` / `enum class` lowering).
+
+## Native CLI Usage
 
 ```sh
-./gradlew stageNativeCliBinary jvmTest
-build/bin/kotlin-cpp tokens ../rust-kotlin/src
-build/bin/kotlin-cpp tokens path/to/File.kt
+./gradlew build
+build/bin/macosArm64/releaseExecutable/kotlin-cpp.kexe --help
+
+# Transliterate Kotlin to co-located C++23 .hpp/.cpp files (default command)
+build/bin/macosArm64/releaseExecutable/kotlin-cpp.kexe -o build/cpp_out path/to/File.kt
+
+# Verify lossless Kotlin -> PacketStream (ANTLR4 + universal syn-kotlin) -> Kotlin round-trip
+build/bin/macosArm64/releaseExecutable/kotlin-cpp.kexe roundtrip Input.kt Regenerated.kt
+
+# Inspect PacketStream frames, comments, KDoc links, and suspend declarations
+build/bin/macosArm64/releaseExecutable/kotlin-cpp.kexe packets path/to/File.kt
+
+# Inspect universal syn-kotlin + proc-macro2-kotlin token associations
+build/bin/macosArm64/releaseExecutable/kotlin-cpp.kexe tokens path/to/File.kt
 ```
 
-Directory inputs recurse over `.kt` files in stable sorted order. Inspection writes no source files. Comments and string contents are not keyword candidates; interpolated strings currently remain atomic literals. The shared adapter has regression coverage for nested quotes inside templates, mismatched delimiter kinds and escaped Kotlin identifiers.
+## Verification
 
-## Kotlin round-trip check
+- `./gradlew test` — Runs all multiplatform unit tests, JVM/POSIX/MinGW native IO tests, C++23 Clang compile-and-execute tests, Swift Export (`KotlinCpp`) tests, Android tests, foreign guest tests, and JetBrains IntelliJ IDEA (`2025.3.6.1`) plugin tests (`:ide-plugin:test`).
+- `./gradlew build` — Builds all retained Kotlin Multiplatform targets (`allWarningsAsErrors = true`), `ktlintCheck`, and `detekt`.
 
-```sh
-build/bin/kotlin-cpp roundtrip Input.kt Regenerated.kt
-```
-
-This re-lexes the Kotlin input, associates function syntax with the shared Syn vocabulary, enters the existing standalone Syn parser via that vocabulary's canonical token encoding, and calls the existing Kotlin emitter. The mandatory encoding boundary keeps standalone spans separate from procedural-compiler handles; it is not an alternate engine or fallback. No original Rust input is read or retained.
-
-The command writes a new regenerated file (never overwrites), then requires exact source equality. A formatting/content mismatch exits with an error and leaves the regenerated file available for a real diff. Parse/association failures do not write output. Tests cover function signatures, arithmetic, conditionals, plain strings, multiple functions, and packages, plus changed-input and non-passthrough controls. Imports, classes, local bindings, trivia and templates still require further association work; this is not yet a whole-project round-trip claim.
-
-**Fidelity boundary:** the existing adapter still supplies call-site spans and drops trivia. Shared token `toString()` uses Rust-oriented literal rendering, not a lossless Kotlin round-trip. Source ranges/trivia, Kotlin declaration association, type/control-flow lowering and exact-output C++ fixtures remain necessary before claiming source-faithful translation. Do not use the inspection report as an emitter.
-
-The intended path is to reuse the established Rust → token → Kotlin associations from the Kotlin side, not build a C++ wrapper or a separate replacement parser/helper stack. Acceptance includes deterministic exact-output fixtures and recognizable correspondence with the Kotlin source, alongside compilation and semantic tests.
-
-See [AGENTS.md](AGENTS.md) for the current direction and the inherited baseline contract.
-
-## Inherited IntelliJ plugin documentation
-
-[![Twitter Follow](https://img.shields.io/badge/follow-%40JBPlatform-1DA1F2?logo=twitter)](https://twitter.com/JBPlatform)
-[![Developers Forum](https://img.shields.io/badge/JetBrains%20Platform-Join-blue)][jb:forum]
-
-## Overview
-
-This repository implements an IntelliJ Platform plugin.
-
-## Demo Functionality
-
-The sample plugin adds a `My Tool Window` tool window with a simple functionality of shuffling a random number.
-
-## Plugin structure
-
-A generated project contains the following content structure:
-
-```
-.
-├── .run/                   Predefined Run/Debug Configurations
-├── gradle
-│   ├── wrapper/            Gradle Wrapper
-│   ├── libs.versions.toml  Version catalog
-├── src                     Plugin sources
-│   └── main
-│       ├── kotlin/         Kotlin production sources
-│       └── resources/      Plugin resources
-│           ├── META-INF/   Plugin configuration file and logo
-│           └── messages/   Message bundles
-├── .gitignore              Git ignoring rules
-├── build.gradle.kts        Gradle build configuration
-├── gradle.properties       Gradle configuration properties
-├── gradlew                 *nix Gradle Wrapper script
-├── gradlew.bat             Windows Gradle Wrapper script
-├── README.md               This file
-└── settings.gradle.kts     Gradle project settings
-```
-
-In addition to the configuration files, the most crucial part is the `src` directory, which contains our implementation and the manifest for our plugin – [plugin.xml][file:plugin.xml].
-
-> [!NOTE]
-> To use Java in your plugin, create the `/src/main/java` directory.
-
-The plugin logo is placed in `src/main/resources/META-INF/pluginIcon.svg`.
-See [Plugin Logo][docs:logo] for more information and logo requirements.
-
-## Build script
-
-The [build.gradle.kts][file:build.gradle.kts] is the core of the project definition.
-It applies three Gradle plugins:
-
-| Plugin                             | Description                                                                      |
-|------------------------------------|----------------------------------------------------------------------------------|
-| `org.jetbrains.kotlin.jvm`         | Adds Kotlin support                                                              |
-| `org.jetbrains.changelog`          | Simplifies patching the [CHANGELOG.md][file:CHANGELOG.md] file                   |
-| `org.jetbrains.intellij.platform`  | The [IntelliJ Platform Gradle Plugin][docs:intellij-platform-gradle-plugin-docs] |
-
-The `intellijPlatform` dependencies block selects the IDE to compile against:
-
-```kotlin
-intellijIdea("2025.3.6.1")
-```
-
-See [Target Versions][docs:target-version] for more information.
-
-The `intellijPlatform` dependencies block also contains a dependency on the platform testing framework:
-
-```kotlin
-testFramework(TestFrameworkType.Platform)
-```
-
-See [Testing][docs:testing] for more information
-
-## Plugin configuration file
-
-The plugin configuration file is a [plugin.xml][file:plugin.xml] file located in the `src/main/resources/META-INF` directory.
-It provides general information about the plugin, its dependencies, extensions, and listeners.
-
-You can read more about this file in the [Plugin Configuration File][docs:plugin.xml] section of our documentation.
-
-### Plugin ID and name
-
-Generated plugin ID and name may require adjustment.
-
-These values are generated based on _Group ID_ and _Artifact ID_ provided in the IDE Plugin wizard.
-It is recommended to review `<id>` and `<name>` elements in the plugin.xml file, and adjust them if needed.
-
-Please note that Gradle properties `rootProject.name` and `project.group` don't need to match the `<id>` and `<name>` elements.
-There is no IntelliJ Platform-related reason they should as they serve different functions.
-
-## Predefined Run/Debug configurations
-
-Within the default project structure, there is a `.run` directory provided containing predefined *Run/Debug configurations* that expose corresponding Gradle tasks:
-
-| Configuration name  | Description                                                                                                                                                                         |
-|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Run IDE with Plugin | Runs [`:runIde`][docs:intellij-platform-gradle-plugin-runIde] IntelliJ Platform Gradle Plugin task. Use the *Debug* icon for plugin debugging.                                        |
-| Run Tests           | Runs [`:check`][gradle:lifecycle-tasks] Gradle task.                                                                                                                                |
-| Run Verifications   | Runs [`:verifyPlugin`][docs:intellij-platform-gradle-plugin-verifyPlugin] IntelliJ Platform Gradle Plugin task to check the plugin compatibility against the specified IntelliJ IDEs. |
-
-> [!NOTE]
-> You can find the logs from the running task in the `idea.log` tab.
-
-## Publishing the plugin
-
-> [!TIP]
-> Make sure to follow all guidelines listed in [Publishing a Plugin][docs:publishing] to follow all recommended and required steps.
-
-Releasing a plugin to [JetBrains Marketplace](https://plugins.jetbrains.com) is a straightforward operation that uses the `publishPlugin` Gradle task provided by the [intellij-platform-gradle-plugin][docs:intellij-platform-gradle-plugin-docs].
-
-You can also upload the plugin to the [JetBrains Plugin Repository](https://plugins.jetbrains.com/plugin/upload) manually via UI.
-
-## Useful links
-
-- [IntelliJ Platform SDK Plugin SDK][docs]
-- [IntelliJ Platform Gradle Plugin Documentation][docs:intellij-platform-gradle-plugin-docs]
-- [IntelliJ Platform Explorer][jb:ipe]
-- [JetBrains Marketplace Quality Guidelines][jb:quality-guidelines]
-- [IntelliJ Platform UI Guidelines][jb:ui-guidelines]
-- [JetBrains Marketplace Paid Plugins][jb:paid-plugins]
-- [IntelliJ SDK Code Samples][gh:code-samples]
-
-[docs]: https://plugins.jetbrains.com/docs/intellij
-[docs:plugin.xml]: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html?from=IJPluginReadmeFile
-[docs:publishing]: https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginReadmeFile
-[docs:intellij-platform-gradle-plugin-docs]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html?from=IJPluginReadmeFile
-[docs:intellij-platform-gradle-plugin-runIde]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html?from=IJPluginReadmeFile#runIde
-[docs:intellij-platform-gradle-plugin-verifyPlugin]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-tasks.html?from=IJPluginReadmeFile#verifyPlugin
-[docs:logo]: https://plugins.jetbrains.com/docs/intellij/plugin-icon-file.html?from=IJPluginReadmeFile
-[docs:target-version]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html?from=IJPluginReadmeFile#target-versions
-[docs:testing]: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html?from=IJPluginReadmeFile#testing
-
-[file:build.gradle.kts]: ./build.gradle.kts
-[file:CHANGELOG.md]: ./CHANGELOG.md
-[file:gradle.properties]: ./gradle.properties
-[file:plugin.xml]: ./src/main/resources/META-INF/plugin.xml
-
-[gh:code-samples]: https://github.com/JetBrains/intellij-sdk-code-samples
-
-[gradle:lifecycle-tasks]: https://docs.gradle.org/current/userguide/java_plugin.html#lifecycle_tasks
-
-[jb:github]: https://github.com/JetBrains/.github/blob/main/profile/README.md
-[jb:forum]: https://platform.jetbrains.com/
-[jb:quality-guidelines]: https://plugins.jetbrains.com/docs/marketplace/quality-guidelines.html
-[jb:paid-plugins]: https://plugins.jetbrains.com/docs/marketplace/paid-plugins-marketplace.html
-[jb:ipe]: https://jb.gg/ipe
-[jb:ui-guidelines]: https://jetbrains.github.io/ui
+See [AGENTS.md](AGENTS.md) and [SWIFT.md](SWIFT.md) for contributor and architecture invariants.

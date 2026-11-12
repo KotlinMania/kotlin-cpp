@@ -16,26 +16,26 @@ let package = Package(
         .macOS(.v15),
     ],
     dependencies: [
-        .package(name: "RustKotlin", path: "../../../build/SPMPackage/macosArm64/\(swiftExportConfiguration)"),
+        .package(name: "KotlinCpp", path: "../../../build/SPMPackage/macosArm64/\(swiftExportConfiguration)"),
     ],
     targets: [
         .testTarget(
             name: "SwiftTestHarnessTests",
             dependencies: [
-                .product(name: "RustKotlinLibrary", package: "RustKotlin"),
+                .product(name: "KotlinCppLibrary", package: "KotlinCpp"),
             ],
             linkerSettings: [
                 .unsafeFlags(
                     [
                         "-L", "../../../build/swift-test/Debug",
-                        "-lRustKotlin",
+                        "-lKotlinCpp",
                     ],
                     .when(configuration: .debug)
                 ),
                 .unsafeFlags(
                     [
                         "-L", "../../../build/swift-test/Release",
-                        "-lRustKotlin",
+                        "-lKotlinCpp",
                     ],
                     .when(configuration: .release)
                 ),

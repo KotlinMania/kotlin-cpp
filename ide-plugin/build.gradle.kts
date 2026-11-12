@@ -9,10 +9,10 @@ plugins {
 
 group = rootProject.group
 version = rootProject.version
-base { archivesName.set("rust-transpiler") }
+base { archivesName.set("kotlin-cpp") }
 
 intellijPlatform {
-    projectName = "rust-transpiler"
+    projectName = "kotlin-cpp"
     pluginConfiguration {
         version = providers.provider { project.version.toString() }
         changeNotes =

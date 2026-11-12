@@ -65,19 +65,6 @@ serde-derive = { module = "io.github.kotlinmania:serde-derive", version.ref = "s
 kotlin-cpp-commonMain = [
   "km-io",
   "antlr4-kotlin",
-  "proc-macro-kotlin",
   "proc-macro2-kotlin",
   "syn-kotlin",
-]
-rust-kotlin-commonMain = [
-  "km-io",
-  "antlr4-kotlin",
-  "serde-json-kotlin",
-  "proc-macro-kotlin",
-  "proc-macro2-kotlin",
-  "quote-kotlin",
-  "syn-kotlin",
-  "anyhow-kotlin",
-  "num-bigint-kotlin",
-  "serde-derive",
 ]

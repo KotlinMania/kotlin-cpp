@@ -420,7 +420,7 @@ kotlin {
     fun KotlinNativeTarget.addNativeCliExecutable() {
         binaries.executable {
             baseName = publishProjectName
-            entryPoint = "io.github.kotlinmania.rustkotlin.main"
+            entryPoint = "io.github.kotlinmania.kotlincpp.main"
         }
     }
 
