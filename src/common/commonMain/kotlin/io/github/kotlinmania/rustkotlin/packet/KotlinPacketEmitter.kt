@@ -236,18 +236,26 @@ private class KotlinPacketEmitter(
             endIdx -= 1
         }
 
-        for (i in startIdx..endIdx) {
+        var i = startIdx
+        while (i <= endIdx) {
             val ref = frame.childRefAt(i)
             if (ref >= 0) {
                 emitCompositeFrame(stream.frames[ref], enclosingIndent + 4)
             } else {
                 val pkt = stream.packets[-(ref + 1)]
                 if (pkt is SyntaxPacket.DelimiterPacket && pkt.delimiterId == KtTokens.SEMICOLON_ID) {
+                    while (out.isNotEmpty() && out[out.length - 1] == ' ') {
+                        out.setLength(out.length - 1)
+                    }
                     out.append('\n').append(bodyIndent)
+                    while (i + 1 <= endIdx && isLeafWhitespace(frame.childRefAt(i + 1))) {
+                        i += 1
+                    }
                 } else {
                     emitLeafPacket(pkt)
                 }
             }
+            i += 1
         }
         out.append('\n').append(closingIndent).append('}')
     }

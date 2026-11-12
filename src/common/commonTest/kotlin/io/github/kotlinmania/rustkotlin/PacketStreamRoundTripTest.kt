@@ -43,7 +43,7 @@ class PacketStreamRoundTripTest {
         assertEquals(source, renderKotlinRoundTrip(source).text)
 
         val comments = stream.commentPackets()
-        assertEquals(4, comments.size)
+        assertEquals(5, comments.size)
         assertEquals(CommentPacketKind.SHEBANG, comments[0].kind)
         assertEquals(CommentPacketKind.LINE, comments[1].kind)
         assertEquals("source", comments[1].portLintDirectiveKind)
@@ -57,6 +57,7 @@ class PacketStreamRoundTripTest {
             comments[2].kdocLinks.map { it.targetPath },
         )
         assertEquals(CommentPacketKind.BLOCK, comments[3].kind)
+        assertEquals(CommentPacketKind.BLOCK, comments[4].kind)
 
         val escapedParams =
             stream.packets
