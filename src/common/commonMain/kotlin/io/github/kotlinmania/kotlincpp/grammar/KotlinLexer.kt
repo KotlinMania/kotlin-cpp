@@ -580,7 +580,21 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
         val VOCABULARY: Vocabulary = VocabularyImpl(LITERAL_NAMES, SYMBOLIC_NAMES)
         val TOKEN_NAMES: List<String> = List(VOCABULARY.maxTokenType + 1) { idx -> VOCABULARY.getLiteralName(idx) ?: VOCABULARY.getSymbolicName(idx) ?: "<INVALID>" }
 
-        private val SERIALIZED_ATN_INTS: IntArray = intArrayOf(
+        private fun concatIntArrays(chunks: List<IntArray>): IntArray {
+            var total = 0
+            for (chunk in chunks) {
+                total += chunk.size
+            }
+            val result = IntArray(total)
+            var offset = 0
+            for (chunk in chunks) {
+                chunk.copyInto(result, destinationOffset = offset)
+                offset += chunk.size
+            }
+            return result
+        }
+
+        private fun serializedAtnChunk0(): IntArray = intArrayOf(
             4, 0, 173, 2340, 6, -1, 6, -1, 6, -1, 6, -1, 2, 0, 7, 0,
             2, 1, 7, 1, 2, 2, 7, 2, 2, 3, 7, 3, 2, 4, 7, 4,
             2, 5, 7, 5, 2, 6, 7, 6, 2, 7, 7, 7, 2, 8, 7, 8,
@@ -706,6 +720,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             70, 1, 70, 1, 70, 1, 70, 1, 70, 1, 71, 1, 71, 1, 71, 1,
             71, 1, 71, 1, 71, 1, 71, 1, 71, 1, 71, 1, 72, 1, 72, 1,
             72, 1, 72, 1, 72, 1, 72, 1, 72, 1, 72, 1, 73, 1, 73, 1,
+        )
+
+        private fun serializedAtnChunk1(): IntArray = intArrayOf(
             73, 1, 73, 1, 73, 1, 73, 1, 73, 1, 74, 1, 74, 1, 74, 1,
             74, 1, 74, 1, 74, 1, 75, 1, 75, 1, 75, 1, 75, 1, 75, 1,
             75, 1, 75, 1, 75, 1, 75, 1, 75, 1, 76, 1, 76, 1, 76, 1,
@@ -831,6 +848,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             1, 232, 1, 232, 1, 232, 1, 233, 1, 233, 1, 233, 1, 233, 1, 234,
             1, 234, 1, 234, 1, 234, 1, 235, 1, 235, 1, 235, 1, 235, 1, 236,
             1, 236, 1, 236, 1, 236, 1, 237, 1, 237, 1, 237, 1, 237, 1, 238,
+        )
+
+        private fun serializedAtnChunk2(): IntArray = intArrayOf(
             1, 238, 1, 238, 1, 238, 1, 239, 1, 239, 1, 239, 1, 239, 1, 240,
             1, 240, 1, 240, 1, 240, 1, 240, 1, 241, 1, 241, 1, 241, 1, 241,
             1, 241, 1, 242, 1, 242, 1, 242, 1, 242, 1, 243, 1, 243, 1, 243,
@@ -956,6 +976,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             1215, 1218, 1218, 1220, 1220, 1222, 1222, 1224, 1224, 1226, 1226, 1228, 1228, 1230, 1231, 1233,
             1233, 1235, 1235, 1237, 1237, 1239, 1239, 1241, 1241, 1243, 1243, 1245, 1245, 1247, 1247, 1249,
             1249, 1251, 1251, 1253, 1253, 1255, 1255, 1257, 1257, 1259, 1259, 1261, 1261, 1263, 1263, 1265,
+        )
+
+        private fun serializedAtnChunk3(): IntArray = intArrayOf(
             1265, 1267, 1267, 1269, 1269, 1271, 1271, 1273, 1273, 1275, 1275, 1277, 1277, 1279, 1279, 1281,
             1281, 1283, 1283, 1285, 1285, 1287, 1287, 1289, 1289, 1291, 1291, 1293, 1293, 1295, 1295, 1297,
             1297, 1299, 1299, 1301, 1301, 1303, 1303, 1305, 1305, 1307, 1307, 1309, 1309, 1311, 1311, 1313,
@@ -1081,6 +1104,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             7694, 7696, 7696, 7698, 7698, 7700, 7700, 7702, 7702, 7704, 7704, 7706, 7706, 7708, 7708, 7710,
             7710, 7712, 7712, 7714, 7714, 7716, 7716, 7718, 7718, 7720, 7720, 7722, 7722, 7724, 7724, 7726,
             7726, 7728, 7728, 7730, 7730, 7732, 7732, 7734, 7734, 7736, 7736, 7738, 7738, 7740, 7740, 7742,
+        )
+
+        private fun serializedAtnChunk4(): IntArray = intArrayOf(
             7742, 7744, 7744, 7746, 7746, 7748, 7748, 7750, 7750, 7752, 7752, 7754, 7754, 7756, 7756, 7758,
             7758, 7760, 7760, 7762, 7762, 7764, 7764, 7766, 7766, 7768, 7768, 7770, 7770, 7772, 7772, 7774,
             7774, 7776, 7776, 7778, 7778, 7780, 7780, 7782, 7782, 7784, 7784, 7786, 7786, 7788, 7788, 7790,
@@ -1206,6 +1232,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             0, 0, 3, 466, 1, 0, 0, 0, 3, 468, 1, 0, 0, 0, 3, 470,
             1, 0, 0, 0, 3, 472, 1, 0, 0, 0, 3, 474, 1, 0, 0, 0,
             3, 476, 1, 0, 0, 0, 3, 478, 1, 0, 0, 0, 3, 480, 1, 0,
+        )
+
+        private fun serializedAtnChunk5(): IntArray = intArrayOf(
             0, 0, 3, 482, 1, 0, 0, 0, 3, 484, 1, 0, 0, 0, 3, 486,
             1, 0, 0, 0, 3, 488, 1, 0, 0, 0, 3, 490, 1, 0, 0, 0,
             3, 492, 1, 0, 0, 0, 3, 494, 1, 0, 0, 0, 3, 496, 1, 0,
@@ -1331,6 +1360,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             472, 1950, 1, 0, 0, 0, 474, 1954, 1, 0, 0, 0, 476, 1958, 1, 0,
             0, 0, 478, 1962, 1, 0, 0, 0, 480, 1966, 1, 0, 0, 0, 482, 1970,
             1, 0, 0, 0, 484, 1974, 1, 0, 0, 0, 486, 1979, 1, 0, 0, 0,
+        )
+
+        private fun serializedAtnChunk6(): IntArray = intArrayOf(
             488, 1984, 1, 0, 0, 0, 490, 1988, 1, 0, 0, 0, 492, 1992, 1, 0,
             0, 0, 494, 1996, 1, 0, 0, 0, 496, 2000, 1, 0, 0, 0, 498, 2004,
             1, 0, 0, 0, 500, 2008, 1, 0, 0, 0, 502, 2012, 1, 0, 0, 0,
@@ -1456,6 +1488,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             5, 64, 0, 0, 891, 892, 1, 0, 0, 0, 892, 893, 3, 320, 158, 0,
             893, 123, 1, 0, 0, 0, 894, 895, 5, 98, 0, 0, 895, 896, 5, 114,
             0, 0, 896, 897, 5, 101, 0, 0, 897, 898, 5, 97, 0, 0, 898, 899,
+        )
+
+        private fun serializedAtnChunk7(): IntArray = intArrayOf(
             5, 107, 0, 0, 899, 900, 5, 64, 0, 0, 900, 901, 1, 0, 0, 0,
             901, 902, 3, 320, 158, 0, 902, 125, 1, 0, 0, 0, 903, 904, 5, 116,
             0, 0, 904, 905, 5, 104, 0, 0, 905, 906, 5, 105, 0, 0, 906, 907,
@@ -1581,6 +1616,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             0, 0, 1222, 1223, 5, 116, 0, 0, 1223, 1224, 5, 101, 0, 0, 1224, 1225,
             5, 99, 0, 0, 1225, 1226, 5, 116, 0, 0, 1226, 1227, 5, 101, 0, 0,
             1227, 1228, 5, 100, 0, 0, 1228, 227, 1, 0, 0, 0, 1229, 1230, 5, 105,
+        )
+
+        private fun serializedAtnChunk8(): IntArray = intArrayOf(
             0, 0, 1230, 1231, 5, 110, 0, 0, 1231, 1232, 5, 116, 0, 0, 1232, 1233,
             5, 101, 0, 0, 1233, 1234, 5, 114, 0, 0, 1234, 1235, 5, 110, 0, 0,
             1235, 1236, 5, 97, 0, 0, 1236, 1237, 5, 108, 0, 0, 1237, 229, 1, 0,
@@ -1706,6 +1744,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             1535, 1539, 3, 294, 145, 0, 1536, 1539, 3, 300, 148, 0, 1537, 1539, 3, 306,
             151, 0, 1538, 1535, 1, 0, 0, 0, 1538, 1536, 1, 0, 0, 0, 1538, 1537,
             1, 0, 0, 0, 1539, 1540, 1, 0, 0, 0, 1540, 1541, 7, 10, 0, 0,
+        )
+
+        private fun serializedAtnChunk9(): IntArray = intArrayOf(
             1541, 311, 1, 0, 0, 0, 1542, 1543, 5, 116, 0, 0, 1543, 1544, 5, 114,
             0, 0, 1544, 1545, 5, 117, 0, 0, 1545, 1552, 5, 101, 0, 0, 1546, 1547,
             5, 102, 0, 0, 1547, 1548, 5, 97, 0, 0, 1548, 1549, 5, 108, 0, 0,
@@ -1831,6 +1872,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             1, 0, 0, 0, 1800, 1801, 3, 46, 21, 0, 1801, 1802, 1, 0, 0, 0,
             1802, 1803, 6, 198, 21, 0, 1803, 401, 1, 0, 0, 0, 1804, 1805, 3, 48,
             22, 0, 1805, 1806, 1, 0, 0, 0, 1806, 1807, 6, 199, 22, 0, 1807, 403,
+        )
+
+        private fun serializedAtnChunk10(): IntArray = intArrayOf(
             1, 0, 0, 0, 1808, 1809, 3, 50, 23, 0, 1809, 1810, 1, 0, 0, 0,
             1810, 1811, 6, 200, 23, 0, 1811, 405, 1, 0, 0, 0, 1812, 1815, 5, 33,
             0, 0, 1813, 1816, 3, 14, 5, 0, 1814, 1816, 3, 12, 4, 0, 1815, 1813,
@@ -1956,6 +2000,9 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             101, 0, 2131, 561, 1, 0, 0, 0, 2132, 2133, 3, 124, 60, 0, 2133, 2134,
             1, 0, 0, 0, 2134, 2135, 6, 279, 102, 0, 2135, 563, 1, 0, 0, 0,
             2136, 2137, 3, 182, 89, 0, 2137, 2138, 1, 0, 0, 0, 2138, 2139, 6, 280,
+        )
+
+        private fun serializedAtnChunk11(): IntArray = intArrayOf(
             103, 0, 2139, 565, 1, 0, 0, 0, 2140, 2141, 3, 184, 90, 0, 2141, 2142,
             1, 0, 0, 0, 2142, 2143, 6, 281, 104, 0, 2143, 567, 1, 0, 0, 0,
             2144, 2145, 3, 186, 91, 0, 2145, 2146, 1, 0, 0, 0, 2146, 2147, 6, 282,
@@ -2064,6 +2111,23 @@ internal class KotlinLexer(input: CharStream?) : Lexer(input) {
             0, 7, 133, 0, 7, 134, 0, 7, 135, 0, 7, 136, 0, 7, 145, 0,
             7, 140, 0, 7, 141, 0, 7, 142, 0, 7, 147, 0, 7, 137, 0, 7,
             146, 0, 7, 144, 0, 7, 143, 0, 7, 148, 0,
+        )
+
+        private val SERIALIZED_ATN_INTS: IntArray = concatIntArrays(
+            listOf(
+                serializedAtnChunk0(),
+                serializedAtnChunk1(),
+                serializedAtnChunk2(),
+                serializedAtnChunk3(),
+                serializedAtnChunk4(),
+                serializedAtnChunk5(),
+                serializedAtnChunk6(),
+                serializedAtnChunk7(),
+                serializedAtnChunk8(),
+                serializedAtnChunk9(),
+                serializedAtnChunk10(),
+                serializedAtnChunk11(),
+            ),
         )
         val SERIALIZED_ATN: String = run {
             val list = IntegerList(SERIALIZED_ATN_INTS.size)

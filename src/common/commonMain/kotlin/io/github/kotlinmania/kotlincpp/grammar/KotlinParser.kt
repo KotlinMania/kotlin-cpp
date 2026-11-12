@@ -12596,7 +12596,21 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
         val VOCABULARY: Vocabulary = VocabularyImpl(LITERAL_NAMES, SYMBOLIC_NAMES)
         val TOKEN_NAMES: List<String> = List(VOCABULARY.maxTokenType + 1) { idx -> VOCABULARY.getLiteralName(idx) ?: VOCABULARY.getSymbolicName(idx) ?: "<INVALID>" }
 
-        private val SERIALIZED_ATN_INTS: IntArray = intArrayOf(
+        private fun concatIntArrays(chunks: List<IntArray>): IntArray {
+            var total = 0
+            for (chunk in chunks) {
+                total += chunk.size
+            }
+            val result = IntArray(total)
+            var offset = 0
+            for (chunk in chunks) {
+                chunk.copyInto(result, destinationOffset = offset)
+                offset += chunk.size
+            }
+            return result
+        }
+
+        private fun serializedAtnChunk0(): IntArray = intArrayOf(
             4, 1, 173, 3549, 2, 0, 7, 0, 2, 1, 7, 1, 2, 2, 7, 2,
             2, 3, 7, 3, 2, 4, 7, 4, 2, 5, 7, 5, 2, 6, 7, 6,
             2, 7, 7, 7, 2, 8, 7, 8, 2, 9, 7, 9, 2, 10, 7, 10,
@@ -12722,6 +12736,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             8, 24, 10, 24, 12, 24, 899, 9, 24, 1, 24, 1, 24, 1, 25, 1,
             25, 3, 25, 905, 8, 25, 5, 25, 907, 8, 25, 10, 25, 12, 25, 910,
             9, 25, 1, 26, 1, 26, 1, 26, 1, 26, 3, 26, 916, 8, 26, 1,
+        )
+
+        private fun serializedAtnChunk1(): IntArray = intArrayOf(
             27, 1, 27, 5, 27, 920, 8, 27, 10, 27, 12, 27, 923, 9, 27, 1,
             27, 1, 27, 1, 28, 3, 28, 928, 8, 28, 1, 28, 1, 28, 5, 28,
             932, 8, 28, 10, 28, 12, 28, 935, 9, 28, 1, 28, 3, 28, 938, 8,
@@ -12847,6 +12864,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1766, 8, 54, 1, 55, 3, 55, 1769, 8, 55, 1, 55, 1, 55, 3, 55,
             1773, 8, 55, 1, 56, 4, 56, 1776, 8, 56, 11, 56, 12, 56, 1777, 1,
             57, 1, 57, 5, 57, 1782, 8, 57, 10, 57, 12, 57, 1785, 9, 57, 1,
+        )
+
+        private fun serializedAtnChunk2(): IntArray = intArrayOf(
             57, 3, 57, 1788, 8, 57, 1, 58, 1, 58, 5, 58, 1792, 8, 58, 10,
             58, 12, 58, 1795, 9, 58, 1, 58, 1, 58, 5, 58, 1799, 8, 58, 10,
             58, 12, 58, 1802, 9, 58, 3, 58, 1804, 8, 58, 1, 58, 1, 58, 5,
@@ -12972,6 +12992,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             12, 108, 2648, 9, 108, 1, 108, 1, 108, 5, 108, 2652, 8, 108, 10, 108,
             12, 108, 2655, 9, 108, 1, 108, 5, 108, 2658, 8, 108, 10, 108, 12, 108,
             2661, 9, 108, 1, 108, 5, 108, 2664, 8, 108, 10, 108, 12, 108, 2667, 9,
+        )
+
+        private fun serializedAtnChunk3(): IntArray = intArrayOf(
             108, 1, 108, 3, 108, 2670, 8, 108, 1, 108, 5, 108, 2673, 8, 108, 10,
             108, 12, 108, 2676, 9, 108, 3, 108, 2678, 8, 108, 1, 108, 1, 108, 1,
             109, 1, 109, 1, 110, 1, 110, 3, 110, 2686, 8, 110, 1, 111, 1, 111,
@@ -13097,6 +13120,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1, 172, 3, 172, 3531, 8, 172, 1, 173, 1, 173, 1, 174, 1, 174, 5,
             174, 3537, 8, 174, 10, 174, 12, 174, 3540, 9, 174, 1, 174, 1, 174, 5,
             174, 3544, 8, 174, 10, 174, 12, 174, 3547, 9, 174, 1, 174, 0, 0, 175,
+        )
+
+        private fun serializedAtnChunk4(): IntArray = intArrayOf(
             0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30,
             32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
             64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94,
@@ -13222,6 +13248,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1, 0, 0, 0, 432, 431, 1, 0, 0, 0, 433, 437, 1, 0, 0, 0,
             434, 436, 5, 5, 0, 0, 435, 434, 1, 0, 0, 0, 436, 439, 1, 0,
             0, 0, 437, 435, 1, 0, 0, 0, 437, 438, 1, 0, 0, 0, 438, 7,
+        )
+
+        private fun serializedAtnChunk5(): IntArray = intArrayOf(
             1, 0, 0, 0, 439, 437, 1, 0, 0, 0, 440, 441, 5, 72, 0, 0,
             441, 443, 3, 348, 174, 0, 442, 444, 3, 148, 74, 0, 443, 442, 1, 0,
             0, 0, 443, 444, 1, 0, 0, 0, 444, 446, 1, 0, 0, 0, 445, 440,
@@ -13347,6 +13376,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             0, 0, 709, 708, 1, 0, 0, 0, 710, 713, 1, 0, 0, 0, 711, 709,
             1, 0, 0, 0, 711, 712, 1, 0, 0, 0, 712, 714, 1, 0, 0, 0,
             713, 711, 1, 0, 0, 0, 714, 718, 5, 8, 0, 0, 715, 717, 5, 5,
+        )
+
+        private fun serializedAtnChunk6(): IntArray = intArrayOf(
             0, 0, 716, 715, 1, 0, 0, 0, 717, 720, 1, 0, 0, 0, 718, 716,
             1, 0, 0, 0, 718, 719, 1, 0, 0, 0, 719, 721, 1, 0, 0, 0,
             720, 718, 1, 0, 0, 0, 721, 723, 3, 38, 19, 0, 722, 711, 1, 0,
@@ -13472,6 +13504,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             991, 989, 1, 0, 0, 0, 991, 992, 1, 0, 0, 0, 992, 994, 1, 0,
             0, 0, 993, 991, 1, 0, 0, 0, 994, 998, 5, 8, 0, 0, 995, 997,
             5, 5, 0, 0, 996, 995, 1, 0, 0, 0, 997, 1000, 1, 0, 0, 0,
+        )
+
+        private fun serializedAtnChunk7(): IntArray = intArrayOf(
             998, 996, 1, 0, 0, 0, 998, 999, 1, 0, 0, 0, 999, 1001, 1, 0,
             0, 0, 1000, 998, 1, 0, 0, 0, 1001, 1003, 3, 60, 30, 0, 1002, 991,
             1, 0, 0, 0, 1003, 1006, 1, 0, 0, 0, 1004, 1002, 1, 0, 0, 0,
@@ -13597,6 +13632,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1, 0, 0, 0, 1272, 1271, 1, 0, 0, 0, 1273, 1275, 1, 0, 0, 0,
             1274, 1260, 1, 0, 0, 0, 1274, 1275, 1, 0, 0, 0, 1275, 1283, 1, 0,
             0, 0, 1276, 1278, 5, 5, 0, 0, 1277, 1276, 1, 0, 0, 0, 1278, 1281,
+        )
+
+        private fun serializedAtnChunk8(): IntArray = intArrayOf(
             1, 0, 0, 0, 1279, 1277, 1, 0, 0, 0, 1279, 1280, 1, 0, 0, 0,
             1280, 1282, 1, 0, 0, 0, 1281, 1279, 1, 0, 0, 0, 1282, 1284, 5, 27,
             0, 0, 1283, 1279, 1, 0, 0, 0, 1283, 1284, 1, 0, 0, 0, 1284, 1288,
@@ -13722,6 +13760,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             0, 0, 1552, 1554, 5, 5, 0, 0, 1553, 1552, 1, 0, 0, 0, 1554, 1557,
             1, 0, 0, 0, 1555, 1553, 1, 0, 0, 0, 1555, 1556, 1, 0, 0, 0,
             1556, 1558, 1, 0, 0, 0, 1557, 1555, 1, 0, 0, 0, 1558, 1560, 3, 32,
+        )
+
+        private fun serializedAtnChunk9(): IntArray = intArrayOf(
             16, 0, 1559, 1548, 1, 0, 0, 0, 1559, 1560, 1, 0, 0, 0, 1560, 1568,
             1, 0, 0, 0, 1561, 1563, 5, 5, 0, 0, 1562, 1561, 1, 0, 0, 0,
             1563, 1566, 1, 0, 0, 0, 1564, 1562, 1, 0, 0, 0, 1564, 1565, 1, 0,
@@ -13847,6 +13888,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1830, 1829, 1, 0, 0, 0, 1830, 1831, 1, 0, 0, 0, 1831, 1851, 1, 0,
             0, 0, 1832, 1834, 5, 5, 0, 0, 1833, 1832, 1, 0, 0, 0, 1834, 1837,
             1, 0, 0, 0, 1835, 1833, 1, 0, 0, 0, 1835, 1836, 1, 0, 0, 0,
+        )
+
+        private fun serializedAtnChunk10(): IntArray = intArrayOf(
             1836, 1838, 1, 0, 0, 0, 1837, 1835, 1, 0, 0, 0, 1838, 1842, 5, 8,
             0, 0, 1839, 1841, 5, 5, 0, 0, 1840, 1839, 1, 0, 0, 0, 1841, 1844,
             1, 0, 0, 0, 1842, 1840, 1, 0, 0, 0, 1842, 1843, 1, 0, 0, 0,
@@ -13972,6 +14016,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1, 0, 0, 0, 2112, 2110, 1, 0, 0, 0, 2112, 2113, 1, 0, 0, 0,
             2113, 2115, 1, 0, 0, 0, 2114, 2112, 1, 0, 0, 0, 2115, 2119, 5, 23,
             0, 0, 2116, 2118, 5, 5, 0, 0, 2117, 2116, 1, 0, 0, 0, 2118, 2121,
+        )
+
+        private fun serializedAtnChunk11(): IntArray = intArrayOf(
             1, 0, 0, 0, 2119, 2117, 1, 0, 0, 0, 2119, 2120, 1, 0, 0, 0,
             2120, 2122, 1, 0, 0, 0, 2121, 2119, 1, 0, 0, 0, 2122, 2124, 3, 156,
             78, 0, 2123, 2112, 1, 0, 0, 0, 2124, 2127, 1, 0, 0, 0, 2125, 2123,
@@ -14097,6 +14144,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             0, 0, 2398, 2396, 1, 0, 0, 0, 2398, 2399, 1, 0, 0, 0, 2399, 2401,
             1, 0, 0, 0, 2400, 2398, 1, 0, 0, 0, 2401, 2418, 3, 152, 76, 0,
             2402, 2404, 5, 5, 0, 0, 2403, 2402, 1, 0, 0, 0, 2404, 2407, 1, 0,
+        )
+
+        private fun serializedAtnChunk12(): IntArray = intArrayOf(
             0, 0, 2405, 2403, 1, 0, 0, 0, 2405, 2406, 1, 0, 0, 0, 2406, 2408,
             1, 0, 0, 0, 2407, 2405, 1, 0, 0, 0, 2408, 2412, 5, 8, 0, 0,
             2409, 2411, 5, 5, 0, 0, 2410, 2409, 1, 0, 0, 0, 2411, 2414, 1, 0,
@@ -14222,6 +14272,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             2672, 2671, 1, 0, 0, 0, 2673, 2676, 1, 0, 0, 0, 2674, 2672, 1, 0,
             0, 0, 2674, 2675, 1, 0, 0, 0, 2675, 2678, 1, 0, 0, 0, 2676, 2674,
             1, 0, 0, 0, 2677, 2642, 1, 0, 0, 0, 2677, 2678, 1, 0, 0, 0,
+        )
+
+        private fun serializedAtnChunk13(): IntArray = intArrayOf(
             2678, 2679, 1, 0, 0, 0, 2679, 2680, 5, 12, 0, 0, 2680, 217, 1, 0,
             0, 0, 2681, 2682, 7, 7, 0, 0, 2682, 219, 1, 0, 0, 0, 2683, 2686,
             3, 222, 111, 0, 2684, 2686, 3, 224, 112, 0, 2685, 2683, 1, 0, 0, 0,
@@ -14347,6 +14400,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             1, 0, 0, 0, 2955, 2957, 1, 0, 0, 0, 2956, 2954, 1, 0, 0, 0,
             2957, 2958, 5, 48, 0, 0, 2958, 2960, 1, 0, 0, 0, 2959, 2943, 1, 0,
             0, 0, 2959, 2960, 1, 0, 0, 0, 2960, 2963, 1, 0, 0, 0, 2961, 2962,
+        )
+
+        private fun serializedAtnChunk14(): IntArray = intArrayOf(
             5, 41, 0, 0, 2962, 2964, 3, 346, 173, 0, 2963, 2961, 1, 0, 0, 0,
             2963, 2964, 1, 0, 0, 0, 2964, 2967, 1, 0, 0, 0, 2965, 2967, 5, 62,
             0, 0, 2966, 2942, 1, 0, 0, 0, 2966, 2965, 1, 0, 0, 0, 2967, 249,
@@ -14472,6 +14528,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             0, 0, 3238, 3236, 1, 0, 0, 0, 3238, 3239, 1, 0, 0, 0, 3239, 3241,
             1, 0, 0, 0, 3240, 3238, 1, 0, 0, 0, 3241, 3243, 3, 268, 134, 0,
             3242, 3238, 1, 0, 0, 0, 3243, 3244, 1, 0, 0, 0, 3244, 3242, 1, 0,
+        )
+
+        private fun serializedAtnChunk15(): IntArray = intArrayOf(
             0, 0, 3244, 3245, 1, 0, 0, 0, 3245, 3253, 1, 0, 0, 0, 3246, 3248,
             5, 5, 0, 0, 3247, 3246, 1, 0, 0, 0, 3248, 3251, 1, 0, 0, 0,
             3249, 3247, 1, 0, 0, 0, 3249, 3250, 1, 0, 0, 0, 3250, 3252, 1, 0,
@@ -14597,6 +14656,9 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             3511, 3513, 3, 344, 172, 0, 3512, 3511, 1, 0, 0, 0, 3513, 3514, 1, 0,
             0, 0, 3514, 3512, 1, 0, 0, 0, 3514, 3515, 1, 0, 0, 0, 3515, 3516,
             1, 0, 0, 0, 3516, 3517, 5, 12, 0, 0, 3517, 341, 1, 0, 0, 0,
+        )
+
+        private fun serializedAtnChunk16(): IntArray = intArrayOf(
             3518, 3519, 7, 0, 0, 0, 3519, 3523, 7, 29, 0, 0, 3520, 3522, 5, 5,
             0, 0, 3521, 3520, 1, 0, 0, 0, 3522, 3525, 1, 0, 0, 0, 3523, 3521,
             1, 0, 0, 0, 3523, 3524, 1, 0, 0, 0, 3524, 3526, 1, 0, 0, 0,
@@ -14644,6 +14706,28 @@ internal class KotlinParser(input: TokenStream?) : Parser(input) {
             3231, 3238, 3244, 3249, 3253, 3258, 3262, 3268, 3275, 3284, 3288, 3294, 3303, 3312, 3318, 3324,
             3327, 3333, 3338, 3361, 3367, 3374, 3381, 3386, 3393, 3395, 3399, 3401, 3411, 3416, 3422, 3429,
             3432, 3445, 3451, 3458, 3462, 3478, 3483, 3490, 3495, 3503, 3508, 3514, 3523, 3530, 3538, 3545,
+        )
+
+        private val SERIALIZED_ATN_INTS: IntArray = concatIntArrays(
+            listOf(
+                serializedAtnChunk0(),
+                serializedAtnChunk1(),
+                serializedAtnChunk2(),
+                serializedAtnChunk3(),
+                serializedAtnChunk4(),
+                serializedAtnChunk5(),
+                serializedAtnChunk6(),
+                serializedAtnChunk7(),
+                serializedAtnChunk8(),
+                serializedAtnChunk9(),
+                serializedAtnChunk10(),
+                serializedAtnChunk11(),
+                serializedAtnChunk12(),
+                serializedAtnChunk13(),
+                serializedAtnChunk14(),
+                serializedAtnChunk15(),
+                serializedAtnChunk16(),
+            ),
         )
         val SERIALIZED_ATN: String = run {
             val list = IntegerList(SERIALIZED_ATN_INTS.size)
