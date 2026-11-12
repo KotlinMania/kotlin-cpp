@@ -58,11 +58,9 @@ internal object KotlinPacketLexing {
                     charPositionInLine: Int,
                     msg: String?,
                     e: RecognitionException?,
-                ) {
-                    throw IllegalArgumentException(
-                        "$sourcePath:$line:${charPositionInLine + 1}: Kotlin syntax error: ${msg ?: "invalid syntax"}",
-                    )
-                }
+                ): Unit = throw IllegalArgumentException(
+                    "$sourcePath:$line:${charPositionInLine + 1}: Kotlin syntax error: ${msg ?: "invalid syntax"}",
+                )
             }
 
         val charStream = CharStreams.fromString(source, sourcePath)
@@ -189,14 +187,16 @@ internal object KotlinPacketLexing {
         pairBalancedDelimiters(packets)
         UniversalSynTokenAssociation.attachAll(packets)
 
-        val tokCoreFirst = IntArray(nonEofCount) { idx ->
-            val raw = rawCoreFirst[idx]
-            if (raw >= 0) rawToFinal[raw] else -1
-        }
-        val tokCoreLast = IntArray(nonEofCount) { idx ->
-            val raw = rawCoreLast[idx]
-            if (raw >= 0) rawToFinal[raw] else -1
-        }
+        val tokCoreFirst =
+            IntArray(nonEofCount) { idx ->
+                val raw = rawCoreFirst[idx]
+                if (raw >= 0) rawToFinal[raw] else -1
+            }
+        val tokCoreLast =
+            IntArray(nonEofCount) { idx ->
+                val raw = rawCoreLast[idx]
+                if (raw >= 0) rawToFinal[raw] else -1
+            }
 
         return ParsedKotlinUnit(
             fileCtx = fileCtx,
@@ -1220,16 +1220,18 @@ internal object KotlinPacketLexing {
         fun linkPair(openIdx: Int, closeIdx: Int) {
             val openPkt = packets[openIdx] as SyntaxPacket.DelimiterPacket
             val closePkt = packets[closeIdx] as SyntaxPacket.DelimiterPacket
-            packets[openIdx] = openPkt.copy(matchingPacketIndex = closeIdx).also {
-                it.universalSynToken = openPkt.universalSynToken
-                it.synToken = openPkt.synToken
-                it.procMacroToken = openPkt.procMacroToken
-            }
-            packets[closeIdx] = closePkt.copy(matchingPacketIndex = openIdx).also {
-                it.universalSynToken = closePkt.universalSynToken
-                it.synToken = closePkt.synToken
-                it.procMacroToken = closePkt.procMacroToken
-            }
+            packets[openIdx] =
+                openPkt.copy(matchingPacketIndex = closeIdx).also {
+                    it.universalSynToken = openPkt.universalSynToken
+                    it.synToken = openPkt.synToken
+                    it.procMacroToken = openPkt.procMacroToken
+                }
+            packets[closeIdx] =
+                closePkt.copy(matchingPacketIndex = openIdx).also {
+                    it.universalSynToken = closePkt.universalSynToken
+                    it.synToken = closePkt.synToken
+                    it.procMacroToken = closePkt.procMacroToken
+                }
         }
 
         for (idx in packets.indices) {

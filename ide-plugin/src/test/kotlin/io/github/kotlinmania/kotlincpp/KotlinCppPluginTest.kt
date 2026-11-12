@@ -65,12 +65,14 @@ class KotlinCppPluginTest : BasePlatformTestCase() {
 
         action.actionPerformed(event)
 
-        val generatedHpp = checkNotNull(ktFile.parent.findChild("Symbol.hpp")) {
-            "Expected sibling Symbol.hpp to be created"
-        }
-        val generatedCpp = checkNotNull(ktFile.parent.findChild("Symbol.cpp")) {
-            "Expected sibling Symbol.cpp to be created"
-        }
+        val generatedHpp =
+            checkNotNull(ktFile.parent.findChild("Symbol.hpp")) {
+                "Expected sibling Symbol.hpp to be created"
+            }
+        val generatedCpp =
+            checkNotNull(ktFile.parent.findChild("Symbol.cpp")) {
+                "Expected sibling Symbol.cpp to be created"
+            }
 
         val hppText = VfsUtilCore.loadText(generatedHpp)
         assertTrue(hppText.contains("#pragma once"))

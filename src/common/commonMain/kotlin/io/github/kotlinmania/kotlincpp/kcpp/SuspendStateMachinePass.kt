@@ -464,8 +464,10 @@ internal object SuspendStateMachinePass {
             calleeName in ctx.sameFileSuspendFuns ||
                 calleeName in ctx.suspendCallableVars ||
                 calleeName in KNOWN_SUSPEND_PRIMITIVES ||
-                (calleeName == "invoke" && receiverFrame != null &&
-                    extractSimpleRefName(stream, receiverFrame) in ctx.suspendCallableVars)
+                (
+                    calleeName == "invoke" && receiverFrame != null &&
+                        extractSimpleRefName(stream, receiverFrame) in ctx.suspendCallableVars
+                )
 
         if (isDirectSuspendCall) {
             val explicitAllowedOnRestricted =
@@ -695,9 +697,11 @@ internal object SuspendStateMachinePass {
         if (callee != "suspendCoroutineUninterceptedOrReturn") return null
 
         val trailingLambda =
-            FrameAstHelpers.firstChildFrame(stream, targetCall, KtNodeTypes.LAMBDA_ARGUMENT_ID)
+            FrameAstHelpers
+                .firstChildFrame(stream, targetCall, KtNodeTypes.LAMBDA_ARGUMENT_ID)
                 ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
-                ?: FrameAstHelpers.firstChildFrame(stream, targetCall, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
+                ?: FrameAstHelpers
+                    .firstChildFrame(stream, targetCall, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
                     ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.VALUE_ARGUMENT_ID) }
                     ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
                 ?: return null

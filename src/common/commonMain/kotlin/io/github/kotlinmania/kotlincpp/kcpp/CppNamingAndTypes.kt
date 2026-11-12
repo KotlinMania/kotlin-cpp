@@ -560,13 +560,14 @@ internal class CppTypeTranslator(
 
         val cppName =
             if (qualifiedParts.size > 1) {
-                val prefix = qualifiedParts.dropLast(1).joinToString("::") { seg ->
-                    if (seg.firstOrNull()?.isUpperCase() == true) {
-                        CppNamingPolicy.toTypeName(seg)
-                    } else {
-                        CppNamingPolicy.toNamespaceSegment(seg)
+                val prefix =
+                    qualifiedParts.dropLast(1).joinToString("::") { seg ->
+                        if (seg.firstOrNull()?.isUpperCase() == true) {
+                            CppNamingPolicy.toTypeName(seg)
+                        } else {
+                            CppNamingPolicy.toNamespaceSegment(seg)
+                        }
                     }
-                }
                 "$prefix::${CppNamingPolicy.toTypeName(simpleName)}"
             } else {
                 CppNamingPolicy.toTypeName(simpleName)

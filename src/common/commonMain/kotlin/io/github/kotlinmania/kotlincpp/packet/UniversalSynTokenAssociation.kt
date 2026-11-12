@@ -1,7 +1,6 @@
 package io.github.kotlinmania.kotlincpp.packet
 
 import io.github.kotlinmania.procmacro2.Delimiter
-import io.github.kotlinmania.procmacro2.Group as ProcMacroGroup
 import io.github.kotlinmania.procmacro2.Ident
 import io.github.kotlinmania.procmacro2.Literal
 import io.github.kotlinmania.procmacro2.Punct
@@ -85,6 +84,7 @@ import io.github.kotlinmania.syn.token.Use
 import io.github.kotlinmania.syn.token.Virtual
 import io.github.kotlinmania.syn.token.Where
 import io.github.kotlinmania.syn.token.While
+import io.github.kotlinmania.procmacro2.Group as ProcMacroGroup
 
 /**
  * Associates every significant [SyntaxPacket] produced by the ANTLR4 Kotlin specification

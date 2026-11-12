@@ -342,7 +342,8 @@ internal object GcAndOwnershipPass {
         if (frame.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
             val ident = FrameAstHelpers.directIdentPacket(stream, frame)
             if (ident != null) {
-                out.getOrPut(ident.unescapedName) { ArrayList() }
+                out
+                    .getOrPut(ident.unescapedName) { ArrayList() }
                     .add(UseSite(packetIndex = ident.packetIndex, enclosingStmtFrameIndex = topStmtFrameIndex))
             }
         }

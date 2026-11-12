@@ -282,13 +282,14 @@ internal object SameFileSymbolPass {
             }
         }
 
-        val forwardDecls = detectForwardDeclarationsAndStampReferences(
-            stream = stream,
-            classesByName = classesByName,
-            functionsByName = functionsByName,
-            propertiesByName = propertiesByName,
-            importAliases = importAliases,
-        )
+        val forwardDecls =
+            detectForwardDeclarationsAndStampReferences(
+                stream = stream,
+                classesByName = classesByName,
+                functionsByName = functionsByName,
+                propertiesByName = propertiesByName,
+                importAliases = importAliases,
+            )
 
         return SameFileSymbolTable(
             packageName = packageName,
@@ -600,8 +601,10 @@ internal object SameFileSymbolPass {
 
         val finalKind =
             if (rawClassKind == KtClassKind.SIMPLE_ENUM &&
-                (ctorParams.isNotEmpty() || memberFnIndices.isNotEmpty() || memberPropIndices.isNotEmpty() ||
-                    enumEntries.any { it.constructorArgsFrameIndex != null || it.bodyFrameIndex != null })
+                (
+                    ctorParams.isNotEmpty() || memberFnIndices.isNotEmpty() || memberPropIndices.isNotEmpty() ||
+                        enumEntries.any { it.constructorArgsFrameIndex != null || it.bodyFrameIndex != null }
+                )
             ) {
                 KtClassKind.RICH_ENUM
             } else {

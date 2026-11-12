@@ -325,7 +325,8 @@ internal object ControlFlowAndTypePass {
                     val recvText = FrameAstHelpers.frameSourceSlice(stream, parts[0]).trim()
                     val selCall =
                         if (parts[1].nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
-                            FrameAstHelpers.firstChildFrame(stream, parts[1], KtNodeTypes.REFERENCE_EXPRESSION_ID)
+                            FrameAstHelpers
+                                .firstChildFrame(stream, parts[1], KtNodeTypes.REFERENCE_EXPRESSION_ID)
                                 ?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }
                         } else {
                             FrameAstHelpers.directIdentPacket(stream, parts[1])?.unescapedName
@@ -410,7 +411,14 @@ internal object ControlFlowAndTypePass {
                 val op = FrameAstHelpers.frameSourceSlice(stream, children[1]).trim()
                 val lhsIsNull = children[0].nodeTypeId == KtNodeTypes.NULL_ID
                 val rhsIsNull = children[2].nodeTypeId == KtNodeTypes.NULL_ID
-                val varSide = if (rhsIsNull) children[0] else if (lhsIsNull) children[2] else null
+                val varSide =
+                    if (rhsIsNull) {
+                        children[0]
+                    } else if (lhsIsNull) {
+                        children[2]
+                    } else {
+                        null
+                    }
                 if (varSide != null && varSide.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID && (op == "!=" || op == "==")) {
                     expr.flags = expr.flags or PacketFlags.SMART_CAST_NON_NULL
                     val targetBranch = if (op == "!=") thenWrap else elseWrap

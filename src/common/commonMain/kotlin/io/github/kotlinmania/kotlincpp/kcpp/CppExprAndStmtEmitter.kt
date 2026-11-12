@@ -175,7 +175,8 @@ internal class CppExprAndStmtEmitter(
                     .removeSuffix("&")
                     .removeSuffix("*")
             val srcExpr = resolveBoundName(sc.kotlinVarName) ?: CppNamingPolicy.toSnakeCase(sc.kotlinVarName)
-            out.append(indent)
+            out
+                .append(indent)
                 .append("auto* ")
                 .append(sc.narrowedCppName)
                 .append(" = dynamic_cast<")
@@ -196,7 +197,13 @@ internal class CppExprAndStmtEmitter(
         val evalTemps = bundle.suspendPlan.hoistedTempsBeforeStmtFrame[stmtFrameIndex].orEmpty()
         for (ht in evalTemps) {
             val exprCode = emitExprIgnoringHoist(stream.frames[ht.exprFrameIndex])
-            out.append(indent).append("auto ").append(ht.tempCppName).append(" = ").append(exprCode).append(";\n")
+            out
+                .append(indent)
+                .append("auto ")
+                .append(ht.tempCppName)
+                .append(" = ")
+                .append(exprCode)
+                .append(";\n")
         }
 
         val cfValues = bundle.cfPlan.hoistedSuspendControlFlowsBeforeStmt[stmtFrameIndex].orEmpty()
@@ -204,7 +211,13 @@ internal class CppExprAndStmtEmitter(
             includes.addSystem("optional")
             val cfFrame = stream.frames[cf.controlFlowFrameIndex]
             val slotType = inferControlFlowResultType(cfFrame)
-            out.append(indent).append("std::optional<").append(slotType).append("> ").append(cf.slotCppName).append(";\n")
+            out
+                .append(indent)
+                .append("std::optional<")
+                .append(slotType)
+                .append("> ")
+                .append(cf.slotCppName)
+                .append(";\n")
             out.append(emitStatement(cfFrame, indent, inValuePosition = true, resultTargetVar = cf.slotCppName))
         }
     }
@@ -408,7 +421,11 @@ internal class CppExprAndStmtEmitter(
                     }
                 bindLocalName(kotlinName, cppName)
                 return buildString {
-                    append(indent).append(declType).append(' ').append(cppName).append("{};\n")
+                    append(indent)
+                        .append(declType)
+                        .append(' ')
+                        .append(cppName)
+                        .append("{};\n")
                     append(emitInlineExpansionAsStatement(inlineExp, indent, targetVar = cppName))
                 }
             }
@@ -485,7 +502,8 @@ internal class CppExprAndStmtEmitter(
         indent: String,
     ): String {
         val exprChild =
-            FrameAstHelpers.childFrames(stream, retFrame)
+            FrameAstHelpers
+                .childFrames(stream, retFrame)
                 .firstOrNull { it.nodeTypeId != KtNodeTypes.LABEL_QUALIFIER_ID }
         return if (exprChild == null) {
             "${indent}return;\n"
@@ -506,7 +524,8 @@ internal class CppExprAndStmtEmitter(
     private fun emitThrowableExpr(exprFrame: PacketFrame): String {
         if (exprFrame.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
             val callee =
-                FrameAstHelpers.firstChildFrame(stream, exprFrame, KtNodeTypes.REFERENCE_EXPRESSION_ID)
+                FrameAstHelpers
+                    .firstChildFrame(stream, exprFrame, KtNodeTypes.REFERENCE_EXPRESSION_ID)
                     ?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }
             val args = extractCallArgExpressions(exprFrame)
             when (callee) {
@@ -652,8 +671,12 @@ internal class CppExprAndStmtEmitter(
                                 append(indent).append("{\n")
                                 needOuterCloseBrace = true
                                 workIndent = "$indent    "
-                                append(workIndent).append("const auto ").append(singleEvalTemp)
-                                    .append(" = ").append(emitExpression(subjectFrame)).append(";\n")
+                                append(workIndent)
+                                    .append("const auto ")
+                                    .append(singleEvalTemp)
+                                    .append(" = ")
+                                    .append(emitExpression(subjectFrame))
+                                    .append(";\n")
                                 singleEvalTemp
                             } else {
                                 emitExpression(subjectFrame)
@@ -716,7 +739,8 @@ internal class CppExprAndStmtEmitter(
                     val negated = FrameAstHelpers.hasDirectKeyword(stream, cf, KtTokens.NOT_IS_ID)
                     val tr = FrameAstHelpers.firstChildFrame(stream, cf, KtNodeTypes.TYPE_REFERENCE_ID)
                     val cppType =
-                        tr?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
+                        tr
+                            ?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
                             ?.removeSuffix("&")
                             ?.removeSuffix("*")
                             ?: "void"
@@ -728,7 +752,8 @@ internal class CppExprAndStmtEmitter(
                 KtNodeTypes.WHEN_CONDITION_IN_RANGE_ID -> {
                     val negated = FrameAstHelpers.hasDirectKeyword(stream, cf, KtTokens.NOT_IN_ID)
                     val rangeExpr =
-                        FrameAstHelpers.childFrames(stream, cf)
+                        FrameAstHelpers
+                            .childFrames(stream, cf)
                             .lastOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
                     val subj = subjectCode ?: "0"
                     val check = emitRangeMembershipCheck(subj, rangeExpr)
@@ -798,14 +823,15 @@ internal class CppExprAndStmtEmitter(
 
             if (catches.isEmpty()) {
                 if (tryBlock != null) {
-                    append(workIndent).append(
-                        emitBlock(
-                            tryBlock,
-                            workIndent,
-                            isValueBlock = inValuePosition && targetReturn,
-                            resultTargetVar = if (inValuePosition) targetVar else null,
-                        ),
-                    ).append('\n')
+                    append(workIndent)
+                        .append(
+                            emitBlock(
+                                tryBlock,
+                                workIndent,
+                                isValueBlock = inValuePosition && targetReturn,
+                                resultTargetVar = if (inValuePosition) targetVar else null,
+                            ),
+                        ).append('\n')
                 }
             } else {
                 append(workIndent).append("try ")
@@ -963,7 +989,12 @@ internal class CppExprAndStmtEmitter(
                         val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "this"
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
-                        append(inner).append("auto&& ").append(pCpp).append(" = ").append(recvCode).append(";\n")
+                        append(inner)
+                            .append("auto&& ")
+                            .append(pCpp)
+                            .append(" = ")
+                            .append(recvCode)
+                            .append(";\n")
                         bindLocalName(pName, pCpp)
                         appendInlineLambdaBodyStatements(this, lambdaBody, inner, targetVar)
                     }
@@ -971,11 +1002,20 @@ internal class CppExprAndStmtEmitter(
                         val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "this"
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
-                        append(inner).append("auto&& ").append(pCpp).append(" = ").append(recvCode).append(";\n")
+                        append(inner)
+                            .append("auto&& ")
+                            .append(pCpp)
+                            .append(" = ")
+                            .append(recvCode)
+                            .append(";\n")
                         bindLocalName(pName, pCpp)
                         appendInlineLambdaBodyStatements(this, lambdaBody, inner, targetVar = null)
                         if (targetVar != null) {
-                            append(inner).append(targetVar).append(" = ").append(pCpp).append(";\n")
+                            append(inner)
+                                .append(targetVar)
+                                .append(" = ")
+                                .append(pCpp)
+                                .append(";\n")
                         }
                     }
                     BuiltinInlineKind.RUN,
@@ -985,8 +1025,12 @@ internal class CppExprAndStmtEmitter(
                             inlineExp.receiverExprFrameIndex ?: inlineExp.argExprFrameIndices.firstOrNull()
                         if (recvIdx != null) {
                             val recvTemp = freshTemp("kxs_recv")
-                            append(inner).append("auto&& ").append(recvTemp).append(" = ")
-                                .append(emitExpression(stream.frames[recvIdx])).append(";\n")
+                            append(inner)
+                                .append("auto&& ")
+                                .append(recvTemp)
+                                .append(" = ")
+                                .append(emitExpression(stream.frames[recvIdx]))
+                                .append(";\n")
                             val nestedEmitter =
                                 CppExprAndStmtEmitter(
                                     bundle = bundle,
@@ -1002,7 +1046,12 @@ internal class CppExprAndStmtEmitter(
                     BuiltinInlineKind.APPLY -> {
                         val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "(*this)"
                         val recvTemp = freshTemp("kxs_apply")
-                        append(inner).append("auto&& ").append(recvTemp).append(" = ").append(recvCode).append(";\n")
+                        append(inner)
+                            .append("auto&& ")
+                            .append(recvTemp)
+                            .append(" = ")
+                            .append(recvCode)
+                            .append(";\n")
                         val nestedEmitter =
                             CppExprAndStmtEmitter(
                                 bundle = bundle,
@@ -1012,7 +1061,11 @@ internal class CppExprAndStmtEmitter(
                             )
                         nestedEmitter.appendInlineLambdaBodyStatements(this, lambdaBody, inner, targetVar = null)
                         if (targetVar != null) {
-                            append(inner).append(targetVar).append(" = ").append(recvTemp).append(";\n")
+                            append(inner)
+                                .append(targetVar)
+                                .append(" = ")
+                                .append(recvTemp)
+                                .append(";\n")
                         }
                     }
                     BuiltinInlineKind.USE -> {
@@ -1021,9 +1074,24 @@ internal class CppExprAndStmtEmitter(
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
                         val guardStruct = freshTemp("KxsCloseGuard")
                         val guardVar = freshTemp("kxs_close")
-                        append(inner).append("auto&& ").append(pCpp).append(" = ").append(recvCode).append(";\n")
-                        append(inner).append("struct ").append(guardStruct).append(" { decltype((").append(pCpp).append(")) ref; ~")
-                            .append(guardStruct).append("() { ref.close(); } } ").append(guardVar).append('{').append(pCpp).append("};\n")
+                        append(inner)
+                            .append("auto&& ")
+                            .append(pCpp)
+                            .append(" = ")
+                            .append(recvCode)
+                            .append(";\n")
+                        append(inner)
+                            .append("struct ")
+                            .append(guardStruct)
+                            .append(" { decltype((")
+                            .append(pCpp)
+                            .append(")) ref; ~")
+                            .append(guardStruct)
+                            .append("() { ref.close(); } } ")
+                            .append(guardVar)
+                            .append('{')
+                            .append(pCpp)
+                            .append("};\n")
                         bindLocalName(pName, pCpp)
                         appendInlineLambdaBodyStatements(this, lambdaBody, inner, targetVar)
                     }
@@ -1039,9 +1107,22 @@ internal class CppExprAndStmtEmitter(
                         val idxParam = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val idxCpp = CppNamingPolicy.toSnakeCase(idxParam)
                         val boundTemp = freshTemp("kxs_times")
-                        append(inner).append("const auto ").append(boundTemp).append(" = ").append(countCode).append(";\n")
-                        append(inner).append("for (std::int32_t ").append(idxCpp).append(" = 0; ").append(idxCpp)
-                            .append(" < ").append(boundTemp).append("; ++").append(idxCpp).append(") {\n")
+                        append(inner)
+                            .append("const auto ")
+                            .append(boundTemp)
+                            .append(" = ")
+                            .append(countCode)
+                            .append(";\n")
+                        append(inner)
+                            .append("for (std::int32_t ")
+                            .append(idxCpp)
+                            .append(" = 0; ")
+                            .append(idxCpp)
+                            .append(" < ")
+                            .append(boundTemp)
+                            .append("; ++")
+                            .append(idxCpp)
+                            .append(") {\n")
                         includes.addSystem("cstdint")
                         bindLocalName(idxParam, idxCpp)
                         appendInlineLambdaBodyStatements(this, lambdaBody, "$inner    ", targetVar = null)
@@ -1051,7 +1132,12 @@ internal class CppExprAndStmtEmitter(
                         val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "{}"
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
-                        append(inner).append("for (auto&& ").append(pCpp).append(" : ").append(recvCode).append(") {\n")
+                        append(inner)
+                            .append("for (auto&& ")
+                            .append(pCpp)
+                            .append(" : ")
+                            .append(recvCode)
+                            .append(") {\n")
                         bindLocalName(pName, pCpp)
                         appendInlineLambdaBodyStatements(this, lambdaBody, "$inner    ", targetVar = null)
                         append(inner).append("}\n")
@@ -1121,7 +1207,12 @@ internal class CppExprAndStmtEmitter(
             buildString {
                 append(indent).append("{\n")
                 val inner = "$indent    "
-                append(inner).append("auto&& ").append(pinnedVar).append(" = ").append(targetExpr).append(";\n")
+                append(inner)
+                    .append("auto&& ")
+                    .append(pinnedVar)
+                    .append(" = ")
+                    .append(targetExpr)
+                    .append(";\n")
                 if (bundle.config.gcMode == CppGcMode.KONAN_GC) {
                     includes.addProject("kotlinx/coroutines/KotlinGCBridge.hpp")
                     append(inner).append("PinnedArrayGuard kxs_pin_guard(").append(pinnedVar).append(".data());\n")
@@ -1154,8 +1245,12 @@ internal class CppExprAndStmtEmitter(
             buildString {
                 append(indent).append("while (true) {\n")
                 val inner = "$indent    "
-                append(inner).append("auto ").append(curCpp).append(" = ")
-                    .append(atomicRef).append(".load(std::memory_order_seq_cst);\n")
+                append(inner)
+                    .append("auto ")
+                    .append(curCpp)
+                    .append(" = ")
+                    .append(atomicRef)
+                    .append(".load(std::memory_order_seq_cst);\n")
                 if (aop.kind == AtomicOpKind.LOOP) {
                     if (body != null) {
                         appendInlineLambdaBodyStatements(this, body, inner, targetVar = null)
@@ -1171,10 +1266,20 @@ internal class CppExprAndStmtEmitter(
                         }
                         append("();\n")
                     } else {
-                        append(inner).append("auto ").append(nextVar).append(" = ").append(curCpp).append(";\n")
+                        append(inner)
+                            .append("auto ")
+                            .append(nextVar)
+                            .append(" = ")
+                            .append(curCpp)
+                            .append(";\n")
                     }
-                    append(inner).append("if (").append(atomicRef)
-                        .append(".compare_exchange_weak(").append(curCpp).append(", ").append(nextVar)
+                    append(inner)
+                        .append("if (")
+                        .append(atomicRef)
+                        .append(".compare_exchange_weak(")
+                        .append(curCpp)
+                        .append(", ")
+                        .append(nextVar)
                         .append(", std::memory_order_seq_cst, std::memory_order_relaxed)) break;\n")
                 }
                 append(indent).append("}\n")
@@ -1273,8 +1378,9 @@ internal class CppExprAndStmtEmitter(
     }
 
     private fun emitConstantLiteral(litFrame: PacketFrame): String {
-        val pkt = stream.packets.getOrNull(litFrame.firstPacketIndex) as? SyntaxPacket.LiteralPacket
-            ?: return FrameAstHelpers.frameSourceSlice(stream, litFrame).trim()
+        val pkt =
+            stream.packets.getOrNull(litFrame.firstPacketIndex) as? SyntaxPacket.LiteralPacket
+                ?: return FrameAstHelpers.frameSourceSlice(stream, litFrame).trim()
         return when (pkt.literalKind) {
             LiteralPacketKind.NULL -> "nullptr"
             LiteralPacketKind.BOOLEAN -> pkt.rawText
@@ -1448,8 +1554,9 @@ internal class CppExprAndStmtEmitter(
         }
 
     private fun emitReferenceExpr(refFrame: PacketFrame): String {
-        val pkt = FrameAstHelpers.directIdentPacket(stream, refFrame)
-            ?: return FrameAstHelpers.frameSourceSlice(stream, refFrame).trim()
+        val pkt =
+            FrameAstHelpers.directIdentPacket(stream, refFrame)
+                ?: return FrameAstHelpers.frameSourceSlice(stream, refFrame).trim()
         val ktName = pkt.unescapedName
 
         resolveBoundName(ktName)?.let { return it }
@@ -1639,10 +1746,12 @@ internal class CppExprAndStmtEmitter(
         val calleeKt = extractCalleeSimpleName(callFrame)
         val typeArgsFrame = FrameAstHelpers.firstChildFrame(stream, callFrame, KtNodeTypes.TYPE_ARGUMENT_LIST_ID)
         val typeArgs =
-            typeArgsFrame?.let { ta ->
-                FrameAstHelpers.childFramesOfType(stream, ta, KtNodeTypes.TYPE_PROJECTION_ID)
-                    .map { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
-            }.orEmpty()
+            typeArgsFrame
+                ?.let { ta ->
+                    FrameAstHelpers
+                        .childFramesOfType(stream, ta, KtNodeTypes.TYPE_PROJECTION_ID)
+                        .map { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
+                }.orEmpty()
         val args = extractCallArgExpressions(callFrame)
 
         // Builtin Kotlin standard functions / pre-conditions / collections
@@ -1737,7 +1846,9 @@ internal class CppExprAndStmtEmitter(
             when {
                 isCtorCall -> sameFileClass?.cppName ?: CppNamingPolicy.toTypeName(calleeKt)
                 receiverCode == null -> {
-                    bundle.symbols.functionsByName[calleeKt]?.firstOrNull()?.cppName
+                    bundle.symbols.functionsByName[calleeKt]
+                        ?.firstOrNull()
+                        ?.cppName
                         ?: CppNamingPolicy.toSnakeCase(calleeKt)
                 }
                 else -> CppNamingPolicy.toSnakeCase(calleeKt)
@@ -1758,7 +1869,8 @@ internal class CppExprAndStmtEmitter(
         if (argList != null) {
             for (va in FrameAstHelpers.childFramesOfType(stream, argList, KtNodeTypes.VALUE_ARGUMENT_ID)) {
                 val expr =
-                    FrameAstHelpers.childFrames(stream, va)
+                    FrameAstHelpers
+                        .childFrames(stream, va)
                         .firstOrNull { it.nodeTypeId != KtNodeTypes.VALUE_ARGUMENT_NAME_ID }
                 if (expr != null) {
                     out.add(emitExpression(expr))
@@ -1876,7 +1988,8 @@ internal class CppExprAndStmtEmitter(
         val negated = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() } == "!is"
         val lhsCode = lhs?.let { emitExpression(it) } ?: "this"
         val cppType =
-            tr?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
+            tr
+                ?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
                 ?.removeSuffix("&")
                 ?.removeSuffix("*")
                 ?: "void"
@@ -1888,7 +2001,8 @@ internal class CppExprAndStmtEmitter(
     private fun emitPrefixExpr(prefixFrame: PacketFrame): String {
         val opRef = FrameAstHelpers.firstChildFrame(stream, prefixFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
         val operand =
-            FrameAstHelpers.childFrames(stream, prefixFrame)
+            FrameAstHelpers
+                .childFrames(stream, prefixFrame)
                 .lastOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
         val op = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() }.orEmpty()
         val inner = operand?.let { emitExpression(it) }.orEmpty()
@@ -1897,7 +2011,8 @@ internal class CppExprAndStmtEmitter(
 
     private fun emitPostfixExpr(postfixFrame: PacketFrame): String {
         val operand =
-            FrameAstHelpers.childFrames(stream, postfixFrame)
+            FrameAstHelpers
+                .childFrames(stream, postfixFrame)
                 .firstOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
         val opRef = FrameAstHelpers.firstChildFrame(stream, postfixFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
         val op = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() }.orEmpty()
@@ -2154,10 +2269,12 @@ internal class CppExprAndStmtEmitter(
     ) {
         when (frame.nodeTypeId) {
             KtNodeTypes.IF_ID -> {
-                FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.THEN_ID)
+                FrameAstHelpers
+                    .firstChildFrame(stream, frame, KtNodeTypes.THEN_ID)
                     ?.let { FrameAstHelpers.childFrames(stream, it).lastOrNull() }
                     ?.let { collectBranchValueLeaves(it, out) }
-                FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.ELSE_ID)
+                FrameAstHelpers
+                    .firstChildFrame(stream, frame, KtNodeTypes.ELSE_ID)
                     ?.let { FrameAstHelpers.childFrames(stream, it).lastOrNull() }
                     ?.let { collectBranchValueLeaves(it, out) }
             }
@@ -2167,10 +2284,12 @@ internal class CppExprAndStmtEmitter(
                 }
             }
             KtNodeTypes.TRY_ID -> {
-                FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.BLOCK_ID)
+                FrameAstHelpers
+                    .firstChildFrame(stream, frame, KtNodeTypes.BLOCK_ID)
                     ?.let { collectBranchValueLeaves(it, out) }
                 for (c in FrameAstHelpers.childFramesOfType(stream, frame, KtNodeTypes.CATCH_ID)) {
-                    FrameAstHelpers.firstChildFrame(stream, c, KtNodeTypes.BLOCK_ID)
+                    FrameAstHelpers
+                        .firstChildFrame(stream, c, KtNodeTypes.BLOCK_ID)
                         ?.let { collectBranchValueLeaves(it, out) }
                 }
             }

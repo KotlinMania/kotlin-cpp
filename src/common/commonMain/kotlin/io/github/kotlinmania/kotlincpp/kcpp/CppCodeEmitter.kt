@@ -287,7 +287,11 @@ private class CppDeclarationRenderer(
                 out.append(renderTemplatePrefix(cls.typeParams, ""))
             }
             val kw = if (cls.kind == KtClassKind.SIMPLE_ENUM || cls.kind == KtClassKind.RICH_ENUM) "enum class" else "class"
-            out.append(kw).append(' ').append(cls.cppName).append(";\n")
+            out
+                .append(kw)
+                .append(' ')
+                .append(cls.cppName)
+                .append(";\n")
         }
         out.append('\n')
     }
@@ -338,7 +342,12 @@ private class CppDeclarationRenderer(
         return buildString {
             append(renderProvenanceAndLeadingComments(aliasFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(sym.typeParams, indent))
-            append(indent).append("using ").append(sym.cppName).append(" = ").append(targetType).append(";\n")
+            append(indent)
+                .append("using ")
+                .append(sym.cppName)
+                .append(" = ")
+                .append(targetType)
+                .append(";\n")
         }
     }
 
@@ -381,11 +390,28 @@ private class CppDeclarationRenderer(
                             )
                         val isExpr = getterBody.nodeTypeId != KtNodeTypes.BLOCK_ID
                         val bodyStr = emitter.emitBlockOrExprBody(getterBody, isExpr, isVoidReturn = false, indent = indent)
-                        append(indent).append(inlineKw).append(retType).append(' ').append(sym.cppName)
-                            .append('(').append(paramSig).append(')').append(constQual).append(' ').append(bodyStr).append('\n')
+                        append(indent)
+                            .append(inlineKw)
+                            .append(retType)
+                            .append(' ')
+                            .append(sym.cppName)
+                            .append('(')
+                            .append(paramSig)
+                            .append(')')
+                            .append(constQual)
+                            .append(' ')
+                            .append(bodyStr)
+                            .append('\n')
                     } else {
-                        append(indent).append(retType).append(' ').append(sym.cppName)
-                            .append('(').append(paramSig).append(')').append(constQual).append(";\n")
+                        append(indent)
+                            .append(retType)
+                            .append(' ')
+                            .append(sym.cppName)
+                            .append('(')
+                            .append(paramSig)
+                            .append(')')
+                            .append(constQual)
+                            .append(";\n")
                     }
                 }
             } else if (emitInCpp && getterBody != null) {
@@ -401,8 +427,18 @@ private class CppDeclarationRenderer(
                 val constQual = if (enclosingClass != null && recvParam == null) " const" else ""
                 return buildString {
                     append(renderProvenanceAndLeadingComments(propFrame, indent, includeLeadingKdoc = false))
-                    append(indent).append(retType).append(' ').append(qual).append(sym.cppName)
-                        .append('(').append(recvParam.orEmpty()).append(')').append(constQual).append(' ').append(bodyStr).append('\n')
+                    append(indent)
+                        .append(retType)
+                        .append(' ')
+                        .append(qual)
+                        .append(sym.cppName)
+                        .append('(')
+                        .append(recvParam.orEmpty())
+                        .append(')')
+                        .append(constQual)
+                        .append(' ')
+                        .append(bodyStr)
+                        .append('\n')
                 }
             }
             return ""
@@ -424,13 +460,27 @@ private class CppDeclarationRenderer(
                     includes.addSystem("vector")
                     val sz = af.arraySizeExprFrameIndex?.let { emitter.emitExpression(stream.frames[it]) } ?: "0"
                     val prefix = if (enclosingClass == null) "inline " else ""
-                    append(indent).append(prefix).append("std::vector<std::atomic<").append(elemType).append(">> ")
-                        .append(sym.cppName).append("(static_cast<std::size_t>(").append(sz).append("));\n")
+                    append(indent)
+                        .append(prefix)
+                        .append("std::vector<std::atomic<")
+                        .append(elemType)
+                        .append(">> ")
+                        .append(sym.cppName)
+                        .append("(static_cast<std::size_t>(")
+                        .append(sz)
+                        .append("));\n")
                 } else {
                     val initCode = af.initExprFrameIndex?.let { emitter.emitExpression(stream.frames[it]) } ?: "{}"
                     val prefix = if (enclosingClass == null) "inline " else "mutable "
-                    append(indent).append(prefix).append("std::atomic<").append(elemType).append("> ")
-                        .append(sym.cppName).append('{').append(initCode).append("};\n")
+                    append(indent)
+                        .append(prefix)
+                        .append("std::atomic<")
+                        .append(elemType)
+                        .append("> ")
+                        .append(sym.cppName)
+                        .append('{')
+                        .append(initCode)
+                        .append("};\n")
                 }
             }
         }
@@ -445,8 +495,13 @@ private class CppDeclarationRenderer(
             val prefix = if (enclosingClass == null) "inline " else "static inline "
             return buildString {
                 append(renderProvenanceAndLeadingComments(propFrame, indent, includeLeadingKdoc = true))
-                append(indent).append(prefix).append("ThreadLocal<").append(elemType).append("> ")
-                    .append(sym.cppName).append("{};\n")
+                append(indent)
+                    .append(prefix)
+                    .append("ThreadLocal<")
+                    .append(elemType)
+                    .append("> ")
+                    .append(sym.cppName)
+                    .append("{};\n")
             }
         }
 
@@ -462,12 +517,13 @@ private class CppDeclarationRenderer(
             if (sym.isConst) {
                 val cppT = explicitType ?: "auto"
                 val staticOrInline = if (enclosingClass != null) "static constexpr " else "inline constexpr "
-                val valT = if (cppT == "std::string") {
-                    includes.addSystem("string_view")
-                    "std::string_view"
-                } else {
-                    cppT
-                }
+                val valT =
+                    if (cppT == "std::string") {
+                        includes.addSystem("string_view")
+                        "std::string_view"
+                    } else {
+                        cppT
+                    }
                 val renderedInit =
                     if (valT == "std::string_view" && sym.initializerFrameIndex != null) {
                         val strFrame = stream.frames[sym.initializerFrameIndex]
@@ -481,8 +537,14 @@ private class CppDeclarationRenderer(
                     } else {
                         initCode ?: "{}"
                     }
-                append(indent).append(staticOrInline).append(valT).append(' ').append(sym.cppName)
-                    .append(" = ").append(renderedInit).append(";\n")
+                append(indent)
+                    .append(staticOrInline)
+                    .append(valT)
+                    .append(' ')
+                    .append(sym.cppName)
+                    .append(" = ")
+                    .append(renderedInit)
+                    .append(";\n")
             } else if (
                 enclosingClass == null ||
                 enclosingClass.kind == KtClassKind.OBJECT_SINGLETON ||
@@ -492,19 +554,42 @@ private class CppDeclarationRenderer(
                 val constKw = if (!sym.isVar) "const " else ""
                 val cppT = explicitType ?: "auto"
                 if (initCode != null) {
-                    append(indent).append(storageKw).append(constKw).append(cppT).append(' ').append(sym.cppName)
-                        .append(" = ").append(initCode).append(";\n")
+                    append(indent)
+                        .append(storageKw)
+                        .append(constKw)
+                        .append(cppT)
+                        .append(' ')
+                        .append(sym.cppName)
+                        .append(" = ")
+                        .append(initCode)
+                        .append(";\n")
                 } else {
-                    append(indent).append(storageKw).append(cppT).append(' ').append(sym.cppName).append("{};\n")
+                    append(indent)
+                        .append(storageKw)
+                        .append(cppT)
+                        .append(' ')
+                        .append(sym.cppName)
+                        .append("{};\n")
                 }
             } else {
                 val constKw = if (!sym.isVar) "const " else ""
                 val cppT = explicitType ?: "std::any"
                 if (initCode != null) {
-                    append(indent).append(constKw).append(cppT).append(' ').append(sym.cppName)
-                        .append(" = ").append(initCode).append(";\n")
+                    append(indent)
+                        .append(constKw)
+                        .append(cppT)
+                        .append(' ')
+                        .append(sym.cppName)
+                        .append(" = ")
+                        .append(initCode)
+                        .append(";\n")
                 } else {
-                    append(indent).append(constKw).append(cppT).append(' ').append(sym.cppName).append("{};\n")
+                    append(indent)
+                        .append(constKw)
+                        .append(cppT)
+                        .append(' ')
+                        .append(sym.cppName)
+                        .append("{};\n")
                 }
             }
         }
@@ -576,7 +661,12 @@ private class CppDeclarationRenderer(
                 } else if (emitInlineInHpp && enclosingClass == null && sym.typeParams.isEmpty()) {
                     append("inline ")
                 }
-                append(retType).append(' ').append(methodName).append('(').append(paramsRendered).append(')')
+                append(retType)
+                    .append(' ')
+                    .append(methodName)
+                    .append('(')
+                    .append(paramsRendered)
+                    .append(')')
                 if (isConstMethod) append(" const")
                 if (isCAbi) append(" noexcept")
                 if (isOverride && enclosingClass != null && !isStaticOnObject) append(" override")
@@ -602,7 +692,12 @@ private class CppDeclarationRenderer(
             append(renderTemplatePrefix(sym.typeParams, indent))
             append(indent)
             if (isCAbi) append("extern \"C\" ")
-            append(retType).append(' ').append(qualifiedName).append('(').append(paramsRendered).append(')')
+            append(retType)
+                .append(' ')
+                .append(qualifiedName)
+                .append('(')
+                .append(paramsRendered)
+                .append(')')
             if (isConstMethod) append(" const")
             if (isCAbi) append(" noexcept")
             append(' ').append(renderFunctionBody(sym, enclosingClass, activeTps, isVoidReturn, indent)).append('\n')
@@ -645,7 +740,12 @@ private class CppDeclarationRenderer(
                 append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = true))
                 append(renderTemplatePrefix(sym.typeParams, indent))
                 append(indent).append("[[clang::annotate(\"suspend\")]]\n")
-                append(indent).append("void* ").append(sym.cppName).append('(').append(explicitParams).append(')')
+                append(indent)
+                    .append("void* ")
+                    .append(sym.cppName)
+                    .append('(')
+                    .append(explicitParams)
+                    .append(')')
                 if (isTemplate) {
                     val emitter = CppExprAndStmtEmitter(bundle)
                     emitter.bindLocalName(leaf.uContParamKotlinName, "completion")
@@ -664,10 +764,19 @@ private class CppDeclarationRenderer(
                 append('\n')
                 append(renderTemplatePrefix(sym.typeParams, indent))
                 append(indent).append("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n")
-                append(indent).append("__attribute__((error(\"").append(sym.cppName)
-                    .append("() requires suspend lowering; use ").append(sym.cppName)
+                append(indent)
+                    .append("__attribute__((error(\"")
+                    .append(sym.cppName)
+                    .append("() requires suspend lowering; use ")
+                    .append(sym.cppName)
                     .append("(completion) at an explicit ABI boundary\")))\n")
-                append(indent).append(authoringRetType).append(' ').append(sym.cppName).append('(').append(baseParams).append(");\n")
+                append(indent)
+                    .append(authoringRetType)
+                    .append(' ')
+                    .append(sym.cppName)
+                    .append('(')
+                    .append(baseParams)
+                    .append(");\n")
             }
         }
 
@@ -685,7 +794,10 @@ private class CppDeclarationRenderer(
         val qualName = if (qualifierPrefix.isEmpty()) sym.cppName else "$qualifierPrefix::${sym.cppName}"
         return buildString {
             append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = false))
-            append(indent).append("void* ").append(qualName).append('(')
+            append(indent)
+                .append("void* ")
+                .append(qualName)
+                .append('(')
                 .append(
                     buildFunctionParameterList(sym, includeDefaults = false).let {
                         if (it.isEmpty()) {
@@ -694,8 +806,7 @@ private class CppDeclarationRenderer(
                             "$it, std::shared_ptr<Continuation<$contElemType>> completion"
                         }
                     },
-                )
-                .append(") ")
+                ).append(") ")
                 .append(renderedBody)
                 .append('\n')
         }
@@ -759,7 +870,9 @@ private class CppDeclarationRenderer(
             includes.addSystem("exception")
             return buildString {
                 append("{\n")
-                append(indent).append("    try ").append(coreBody)
+                append(indent)
+                    .append("    try ")
+                    .append(coreBody)
                     .append(" catch (...) {\n")
                 append(indent).append("        std::terminate();\n")
                 append(indent).append("    }\n")
@@ -964,8 +1077,14 @@ private class CppDeclarationRenderer(
                         bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.RETURN)
                     } ?: "auto"
                 append('\n')
-                append(indent).append("inline constexpr ").append(retT).append(' ')
-                    .append(cp.cppName).append('(').append(cls.cppName).append(" self) {\n")
+                append(indent)
+                    .append("inline constexpr ")
+                    .append(retT)
+                    .append(' ')
+                    .append(cp.cppName)
+                    .append('(')
+                    .append(cls.cppName)
+                    .append(" self) {\n")
                 append(indent).append("    switch (self) {\n")
                 for (entry in cls.enumEntries) {
                     val argVal =
@@ -975,8 +1094,14 @@ private class CppDeclarationRenderer(
                             val expr = va?.let { FrameAstHelpers.childFrames(stream, it).lastOrNull() }
                             expr?.let { emitter.emitExpression(it) }
                         } ?: "{}"
-                    append(indent).append("        case ").append(cls.cppName).append("::").append(entry.cppName)
-                        .append(": return ").append(argVal).append(";\n")
+                    append(indent)
+                        .append("        case ")
+                        .append(cls.cppName)
+                        .append("::")
+                        .append(entry.cppName)
+                        .append(": return ")
+                        .append(argVal)
+                        .append(";\n")
                 }
                 append(indent).append("    }\n")
                 includes.addSystem("utility")
@@ -1003,8 +1128,16 @@ private class CppDeclarationRenderer(
                     append(renderProvenanceAndLeadingComments(propFrame, indent, includeLeadingKdoc = true))
                     val isExpr = getterBody.nodeTypeId != KtNodeTypes.BLOCK_ID
                     val bodyStr = emitter.emitBlockOrExprBody(getterBody, isExpr, isVoidReturn = false, indent = indent)
-                    append(indent).append("inline ").append(retT).append(' ').append(propSym.cppName)
-                        .append('(').append(cls.cppName).append(" self) ").append(bodyStr).append('\n')
+                    append(indent)
+                        .append("inline ")
+                        .append(retT)
+                        .append(' ')
+                        .append(propSym.cppName)
+                        .append('(')
+                        .append(cls.cppName)
+                        .append(" self) ")
+                        .append(bodyStr)
+                        .append('\n')
                 }
             }
 
@@ -1025,8 +1158,14 @@ private class CppDeclarationRenderer(
                 append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = true))
                 append(renderTemplatePrefix(fnSym.typeParams, indent))
                 val fnCallName = if (fnSym.kotlinName == "invoke") "invoke" else fnSym.cppName
-                append(indent).append("inline ").append(retT).append(' ').append(fnCallName)
-                    .append('(').append(fullParams).append(") ")
+                append(indent)
+                    .append("inline ")
+                    .append(retT)
+                    .append(' ')
+                    .append(fnCallName)
+                    .append('(')
+                    .append(fullParams)
+                    .append(") ")
                     .append(fnEmitter.emitBlockOrExprBody(stream.frames[bodyIdx], fnSym.isExpressionBody, retT == "void", indent))
                     .append('\n')
             }
@@ -1054,13 +1193,33 @@ private class CppDeclarationRenderer(
             append(renderTemplatePrefix(cls.typeParams, indent))
             append(indent).append("class ").append(headName).append(" {\n")
             append(indent).append("private:\n")
-            append(indent).append("    ").append(valType).append(' ').append(fieldName).append(";\n")
+            append(indent)
+                .append("    ")
+                .append(valType)
+                .append(' ')
+                .append(fieldName)
+                .append(";\n")
             append(indent).append("public:\n")
-            append(indent).append("    constexpr explicit ").append(cls.cppName).append('(')
-                .append(valType).append(' ').append(propName).append(") : ")
-                .append(fieldName).append("(std::move(").append(propName).append(")) {}\n")
-            append(indent).append("    constexpr const ").append(valType).append("& ")
-                .append(propName).append("() const noexcept { return ").append(fieldName).append("; }\n")
+            append(indent)
+                .append("    constexpr explicit ")
+                .append(cls.cppName)
+                .append('(')
+                .append(valType)
+                .append(' ')
+                .append(propName)
+                .append(") : ")
+                .append(fieldName)
+                .append("(std::move(")
+                .append(propName)
+                .append(")) {}\n")
+            append(indent)
+                .append("    constexpr const ")
+                .append(valType)
+                .append("& ")
+                .append(propName)
+                .append("() const noexcept { return ")
+                .append(fieldName)
+                .append("; }\n")
             append(indent).append("    constexpr bool operator==(const ").append(cls.cppName).append("&) const = default;\n")
             for (mFnIdx in cls.memberFunctionFrameIndices) {
                 val rendered = renderFunction(stream.frames[mFnIdx], cls, cls.cppName, "$indent    ")
@@ -1087,7 +1246,11 @@ private class CppDeclarationRenderer(
         return buildString {
             append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(cls.typeParams, indent))
-            append(indent).append("class ").append(headName).append(inheritance).append(" {\n")
+            append(indent)
+                .append("class ")
+                .append(headName)
+                .append(inheritance)
+                .append(" {\n")
             append(indent).append("public:\n")
 
             val paramTypes = ArrayList<String>(cls.primaryConstructorParams.size)
@@ -1099,7 +1262,12 @@ private class CppDeclarationRenderer(
                 paramTypes.add(t)
                 if (cp.isVal || cp.isVar) {
                     val mutPrefix = if (cp.isVar) "" else ""
-                    append(inner).append(mutPrefix).append(t).append(' ').append(cp.cppName).append(";\n")
+                    append(inner)
+                        .append(mutPrefix)
+                        .append(t)
+                        .append(' ')
+                        .append(cp.cppName)
+                        .append(";\n")
                 }
             }
 
@@ -1113,9 +1281,15 @@ private class CppDeclarationRenderer(
                         "${paramTypes[i]} ${cp.cppName}_in$def"
                     }
                 val inits = buildConstructorInitializerList(cls, suffix = "_in")
-                append('\n').append(inner).append(explicitKw).append(cls.cppName)
-                    .append('(').append(ctorParams.joinToString(", ")).append(") : ")
-                    .append(inits.joinToString(", ")).append(" {}\n")
+                append('\n')
+                    .append(inner)
+                    .append(explicitKw)
+                    .append(cls.cppName)
+                    .append('(')
+                    .append(ctorParams.joinToString(", "))
+                    .append(") : ")
+                    .append(inits.joinToString(", "))
+                    .append(" {}\n")
             }
 
             append(inner).append("bool operator==(const ").append(cls.cppName).append("&) const = default;\n")
@@ -1127,8 +1301,14 @@ private class CppDeclarationRenderer(
                     cp.typeFrameIndex?.let {
                         bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.VALUE)
                     } ?: "auto"
-                append(inner).append("const ").append(t).append("& component").append(idx + 1)
-                    .append("() const noexcept { return ").append(cp.cppName).append("; }\n")
+                append(inner)
+                    .append("const ")
+                    .append(t)
+                    .append("& component")
+                    .append(idx + 1)
+                    .append("() const noexcept { return ")
+                    .append(cp.cppName)
+                    .append("; }\n")
             }
             if (propParams.isNotEmpty()) {
                 val copyParams =
@@ -1144,9 +1324,15 @@ private class CppDeclarationRenderer(
                     propParams.joinToString(", ") { cp ->
                         "${cp.cppName}_opt.has_value() ? std::move(*${cp.cppName}_opt) : this->${cp.cppName}"
                     }
-                append(inner).append(cls.cppName).append(" copy(")
-                    .append(copyParams.joinToString(", ")).append(") const { return ")
-                    .append(cls.cppName).append('(').append(copyArgs).append("); }\n")
+                append(inner)
+                    .append(cls.cppName)
+                    .append(" copy(")
+                    .append(copyParams.joinToString(", "))
+                    .append(") const { return ")
+                    .append(cls.cppName)
+                    .append('(')
+                    .append(copyArgs)
+                    .append("); }\n")
             }
 
             for (mPropIdx in cls.memberPropertyFrameIndices) {
@@ -1187,9 +1373,15 @@ private class CppDeclarationRenderer(
                         }
                     val initList = buildConstructorInitializerList(cls, suffix = "_value")
                     append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = false))
-                    append(indent).append(fullQual).append("::").append(cls.cppName)
-                        .append('(').append(ctorSigParams).append(") : ")
-                        .append(initList.joinToString(", ")).append(" {}\n")
+                    append(indent)
+                        .append(fullQual)
+                        .append("::")
+                        .append(cls.cppName)
+                        .append('(')
+                        .append(ctorSigParams)
+                        .append(") : ")
+                        .append(initList.joinToString(", "))
+                        .append(" {}\n")
                 }
 
                 for (nestedIdx in cls.memberClassFrameIndices) {
@@ -1227,7 +1419,11 @@ private class CppDeclarationRenderer(
         return buildString {
             append(renderProvenanceAndLeadingComments(declFrame, indent, includeLeadingKdoc = true))
             append(renderTemplatePrefix(cls.typeParams, indent))
-            append(indent).append("class ").append(headName).append(inheritance).append(" {\n")
+            append(indent)
+                .append("class ")
+                .append(headName)
+                .append(inheritance)
+                .append(" {\n")
 
             // Private fields first (`snake_case_`)
             val privateCtorProps =
@@ -1247,8 +1443,12 @@ private class CppDeclarationRenderer(
                             bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.VALUE)
                         } ?: "std::any"
                     val constQual = if (!cp.isVar) "const " else ""
-                    append(inner).append(constQual).append(t).append(' ')
-                        .append(CppNamingPolicy.toPrivateFieldName(cp.name)).append(";\n")
+                    append(inner)
+                        .append(constQual)
+                        .append(t)
+                        .append(' ')
+                        .append(CppNamingPolicy.toPrivateFieldName(cp.name))
+                        .append(";\n")
                 }
                 for (pIdx in privateMemberProps) {
                     append(renderProperty(stream.frames[pIdx], cls, inner))
@@ -1279,7 +1479,12 @@ private class CppDeclarationRenderer(
                         bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.VALUE)
                     } ?: "std::any"
                 val constQual = if (!cp.isVar) "const " else ""
-                append(inner).append(constQual).append(t).append(' ').append(cp.cppName).append(";\n")
+                append(inner)
+                    .append(constQual)
+                    .append(t)
+                    .append(' ')
+                    .append(cp.cppName)
+                    .append(";\n")
             }
 
             // Primary constructor declaration / inline body
@@ -1296,7 +1501,12 @@ private class CppDeclarationRenderer(
                         val def = cp.defaultExprFrameIndex?.let { " = ${emitter.emitExpression(stream.frames[it])}" }.orEmpty()
                         "$t ${cp.cppName}_value$def"
                     }
-                append(ctorVis).append(explicitKw).append(cls.cppName).append('(').append(ctorSigParams).append(')')
+                append(ctorVis)
+                    .append(explicitKw)
+                    .append(cls.cppName)
+                    .append('(')
+                    .append(ctorSigParams)
+                    .append(')')
                 if (emitCtorInCpp) {
                     append(";\n")
                 } else {
@@ -1308,19 +1518,51 @@ private class CppDeclarationRenderer(
                     append(" {}\n")
                 }
                 if (cls.kind == KtClassKind.SEALED_CLASS) {
-                    append(inner).append(cls.cppName).append("(const ").append(cls.cppName).append("&) = default;\n")
-                    append(inner).append(cls.cppName).append('(').append(cls.cppName).append("&&) = default;\n")
-                    append(inner).append(cls.cppName).append("& operator=(const ").append(cls.cppName).append("&) = default;\n")
-                    append(inner).append(cls.cppName).append("& operator=(").append(cls.cppName).append("&&) = default;\n")
+                    append(inner)
+                        .append(cls.cppName)
+                        .append("(const ")
+                        .append(cls.cppName)
+                        .append("&) = default;\n")
+                    append(inner)
+                        .append(cls.cppName)
+                        .append('(')
+                        .append(cls.cppName)
+                        .append("&&) = default;\n")
+                    append(inner)
+                        .append(cls.cppName)
+                        .append("& operator=(const ")
+                        .append(cls.cppName)
+                        .append("&) = default;\n")
+                    append(inner)
+                        .append(cls.cppName)
+                        .append("& operator=(")
+                        .append(cls.cppName)
+                        .append("&&) = default;\n")
                     append(indent).append("public:\n")
                 }
             } else if (cls.kind == KtClassKind.SEALED_CLASS) {
                 append(indent).append("protected:\n")
                 append(inner).append(cls.cppName).append("() = default;\n")
-                append(inner).append(cls.cppName).append("(const ").append(cls.cppName).append("&) = default;\n")
-                append(inner).append(cls.cppName).append('(').append(cls.cppName).append("&&) = default;\n")
-                append(inner).append(cls.cppName).append("& operator=(const ").append(cls.cppName).append("&) = default;\n")
-                append(inner).append(cls.cppName).append("& operator=(").append(cls.cppName).append("&&) = default;\n")
+                append(inner)
+                    .append(cls.cppName)
+                    .append("(const ")
+                    .append(cls.cppName)
+                    .append("&) = default;\n")
+                append(inner)
+                    .append(cls.cppName)
+                    .append('(')
+                    .append(cls.cppName)
+                    .append("&&) = default;\n")
+                append(inner)
+                    .append(cls.cppName)
+                    .append("& operator=(const ")
+                    .append(cls.cppName)
+                    .append("&) = default;\n")
+                append(inner)
+                    .append(cls.cppName)
+                    .append("& operator=(")
+                    .append(cls.cppName)
+                    .append("&&) = default;\n")
                 append(indent).append("public:\n")
             }
 
@@ -1337,7 +1579,11 @@ private class CppDeclarationRenderer(
                         } else {
                             "class"
                         }
-                    append(inner).append(kw).append(' ').append(nestedCls.cppName).append(";\n")
+                    append(inner)
+                        .append(kw)
+                        .append(' ')
+                        .append(nestedCls.cppName)
+                        .append(";\n")
                     deferredOutOfLineNested.add(nestedIdx)
                 } else {
                     val rendered = renderClassOrObject(stream.frames[nestedIdx], fullQual, inner)
@@ -1422,9 +1668,11 @@ private class CppDeclarationRenderer(
         for ((superTypeIdx, argListIdx) in cls.superCallArgsBySuperIndex) {
             val baseName = bundle.typeTranslator.translateTypeFrame(stream.frames[superTypeIdx], CppTypePosition.TYPE_ARGUMENT)
             val args =
-                FrameAstHelpers.childFramesOfType(stream, stream.frames[argListIdx], KtNodeTypes.VALUE_ARGUMENT_ID)
+                FrameAstHelpers
+                    .childFramesOfType(stream, stream.frames[argListIdx], KtNodeTypes.VALUE_ARGUMENT_ID)
                     .mapNotNull { va ->
-                        FrameAstHelpers.childFrames(stream, va)
+                        FrameAstHelpers
+                            .childFrames(stream, va)
                             .firstOrNull { it.nodeTypeId != KtNodeTypes.VALUE_ARGUMENT_NAME_ID }
                             ?.let { emitter.emitExpression(it) }
                     }
@@ -1499,7 +1747,12 @@ private fun emitCompanionCAbiArtifacts(bundle: LoweringBundle): List<CppFileArti
                             "${mapCTypeForPlainC(rawT)} ${vp.cppName}"
                         }
                     }
-                append(retType).append(' ').append(cName).append('(').append(cParams).append(");\n")
+                append(retType)
+                    .append(' ')
+                    .append(cName)
+                    .append('(')
+                    .append(cParams)
+                    .append(");\n")
             }
             append("\n#ifdef __cplusplus\n}\n#endif\n")
         }

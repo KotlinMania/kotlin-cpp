@@ -14,7 +14,9 @@ import com.intellij.util.ui.components.BorderLayoutPanel
 import javax.swing.JButton
 import javax.swing.JPanel
 
-class MyToolWindowFactory : ToolWindowFactory, DumbAware {
+class MyToolWindowFactory :
+    ToolWindowFactory,
+    DumbAware {
     override fun shouldBeAvailable(project: Project): Boolean = true
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -23,7 +25,9 @@ class MyToolWindowFactory : ToolWindowFactory, DumbAware {
         toolWindow.contentManager.addContent(content)
     }
 
-    class MyToolWindow(private val project: Project) {
+    class MyToolWindow(
+        private val project: Project,
+    ) {
         private val content =
             BorderLayoutPanel(8, 8).apply {
                 val topBar =

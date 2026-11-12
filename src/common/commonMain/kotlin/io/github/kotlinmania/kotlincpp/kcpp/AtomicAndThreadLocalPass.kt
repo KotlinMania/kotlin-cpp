@@ -259,7 +259,8 @@ internal object AtomicAndThreadLocalPass {
             extractFirstTypeArgFrame(stream, initFrame)
                 ?: propSym.returnTypeFrameIndex?.let { extractFirstTypeArgFrame(stream, stream.frames[it]) }
         val trailingLambda =
-            FrameAstHelpers.firstChildFrame(stream, initFrame, KtNodeTypes.LAMBDA_ARGUMENT_ID)
+            FrameAstHelpers
+                .firstChildFrame(stream, initFrame, KtNodeTypes.LAMBDA_ARGUMENT_ID)
                 ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
         return ThreadLocalSlotInfo(
             propFrameIndex = propSym.frameIndex,
@@ -344,13 +345,15 @@ internal object AtomicAndThreadLocalPass {
                             val argList = FrameAstHelpers.firstChildFrame(stream, sel, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
                             val args =
                                 if (argList != null) {
-                                    FrameAstHelpers.childFramesOfType(stream, argList, KtNodeTypes.VALUE_ARGUMENT_ID)
+                                    FrameAstHelpers
+                                        .childFramesOfType(stream, argList, KtNodeTypes.VALUE_ARGUMENT_ID)
                                         .mapNotNull { extractArgExpr(stream, it)?.frameIndex }
                                 } else {
                                     emptyList()
                                 }
                             val trailingLambda =
-                                FrameAstHelpers.firstChildFrame(stream, sel, KtNodeTypes.LAMBDA_ARGUMENT_ID)
+                                FrameAstHelpers
+                                    .firstChildFrame(stream, sel, KtNodeTypes.LAMBDA_ARGUMENT_ID)
                                     ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
                             val curParam =
                                 trailingLambda?.let { extractSingleLambdaParam(stream, it) } ?: "it"
