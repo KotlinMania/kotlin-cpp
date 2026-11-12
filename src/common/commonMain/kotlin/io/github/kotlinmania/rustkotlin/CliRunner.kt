@@ -10,6 +10,7 @@ internal val CLI_USAGE_TEXT: String =
     """
     kotlin-cpp: Kotlin token inspection and inherited Rust-to-Kotlin reference translation
     Usage:
+      kotlin-cpp packets <input.kt | source directory...>
       kotlin-cpp tokens <input.kt | source directory...>
       kotlin-cpp roundtrip <input.kt> <regenerated.kt>
       kotlin-cpp inspect [options] <input.rs | dir...>
@@ -17,8 +18,9 @@ internal val CLI_USAGE_TEXT: String =
       kotlin-cpp [translate] [options] <input.rs | dir...>
       kotlin-cpp --help | --version
 
+    packets parses Kotlin into a lossless PacketStream + LightSyntaxTree frames (including comments and KDoc links).
     tokens reports lexical Syn associations; it does not yet emit C++ or resolve Kotlin semantics.
-    roundtrip regenerates through the existing Syn/Kotlin pipeline and requires exact equality.
+    roundtrip regenerates through the PacketStream/KotlinPacketEmitter pipeline and requires exact equality.
     A mismatch keeps the regenerated file for inspection and exits with an error.
 
     Options:
@@ -128,6 +130,10 @@ internal fun runSingleFileCommand(
         write(args[2], regenerated.text)
         require(original == regenerated.text) { "roundtrip mismatch; regenerated Kotlin written to ${args[2]}" }
         report("roundtrip\t${args[1]}\t${args[2]}\tMATCH")
+        return
+    }
+    if (args.firstOrNull() == "packets") {
+        inspectKotlinPackets(args.drop(1), read, isDirectory, report)
         return
     }
     if (args.firstOrNull() == "tokens") {

@@ -119,9 +119,4 @@ gradle.beforeProject {
 
 rootProject.name = providers.gradleProperty("project.name").get()
 
-// Kotlin input uses the source-owned Syn entry point and compiler-token adapter.
-// These are fixed source dependencies, not optional engines or fallback paths.
-includeBuild("../syn-kotlin")
-includeBuild("../proc-macro-kotlin")
-
 include(":ide-plugin")

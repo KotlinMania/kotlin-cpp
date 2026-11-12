@@ -68,4 +68,30 @@ struct RustKotlinExportTests {
         #expect(paths.contains("inline_demo_wrapper.cpp"))
         #expect(paths.contains("InlineDemoNativeActuals.kt"))
     }
+
+    @Test("Builds lossless Kotlin PacketStream with KDoc links, suspend flags, and byte-exact round-trip")
+    func testKotlinPacketStreamAndRoundTrip() {
+        let kotlinSource = """
+        // port-lint: source Yield.kt
+        package kotlinx.coroutines
+
+        /** Suspends caller and notifies [Job]. */
+        public suspend fun yieldNow(step: Int): String {
+            // keep inline note
+            return "step=$step"
+        }
+
+        """
+        let stream = packet.buildKotlinPacketStream(source: kotlinSource, sourcePath: "Yield.kt")
+        #expect(stream.renderRawLossless() == kotlinSource)
+        #expect(stream.commentPackets().count == 3)
+        let kdocPacket = stream.commentPackets()[1]
+        #expect(kdocPacket.kind == packet.CommentPacketKind.KDOC)
+        #expect(kdocPacket.kdocLinks.count == 1)
+        #expect(kdocPacket.kdocLinks[0].targetPath == "Job")
+
+        let roundTripped = renderKotlinRoundTrip(source: kotlinSource)
+        #expect(roundTripped.text == kotlinSource)
+        #expect(roundTripped.summary == "1 items round-tripped")
+    }
 }
