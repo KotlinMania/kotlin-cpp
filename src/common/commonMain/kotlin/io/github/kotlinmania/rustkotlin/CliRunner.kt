@@ -8,8 +8,9 @@ internal const val CLI_VERSION_TEXT: String =
 
 internal val CLI_USAGE_TEXT: String =
     """
-    kotlin-cpp: Kotlin token inspection and inherited Rust-to-Kotlin reference translation
+    kotlin-cpp: Kotlin-to-C++23 transliterator, lossless PacketStream inspector, and Rust-to-Kotlin baseline
     Usage:
+      kotlin-cpp kcpp [options] <input.kt | source directory...>
       kotlin-cpp packets <input.kt | source directory...>
       kotlin-cpp tokens <input.kt | source directory...>
       kotlin-cpp roundtrip <input.kt> <regenerated.kt>
@@ -18,6 +19,7 @@ internal val CLI_USAGE_TEXT: String =
       kotlin-cpp [translate] [options] <input.rs | dir...>
       kotlin-cpp --help | --version
 
+    kcpp transliterates Kotlin source files into co-located C++23 .hpp/.cpp artifacts (try 'kotlin-cpp kcpp --help').
     packets parses Kotlin into a lossless PacketStream + LightSyntaxTree frames (including comments and KDoc links).
     tokens reports lexical Syn associations; it does not yet emit C++ or resolve Kotlin semantics.
     roundtrip regenerates through the PacketStream/KotlinPacketEmitter pipeline and requires exact equality.
@@ -120,6 +122,18 @@ internal fun runSingleFileCommand(
         discoverCrateRawAbiMetadataFromDisk(inp, root, raw, split, TranslationSession.finalStructs)
     },
 ) {
+    if (args.firstOrNull() == "kcpp") {
+        runKotlinToCppCommand(
+            rawArgs = args.drop(1),
+            read = read,
+            write = write,
+            writeForce = writeForce,
+            exists = exists,
+            isDirectory = isDirectory,
+            report = report,
+        )
+        return
+    }
     if (args.firstOrNull() == "roundtrip") {
         require(args.size == 3 && args[1].endsWith(".kt") && args[2].endsWith(".kt")) {
             "usage: kotlin-cpp roundtrip <input.kt> <regenerated.kt>"

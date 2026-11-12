@@ -94,4 +94,36 @@ struct RustKotlinExportTests {
         #expect(roundTripped.text == kotlinSource)
         #expect(roundTripped.summary == "1 items round-tripped")
     }
+
+    @Test("Transliterates Kotlin source into C++23 .hpp/.cpp artifacts via exported kcpp API")
+    func testKotlinToCppTranslationExport() {
+        let kotlinSource = """
+        // port-lint: source internal/Symbol.kt
+        package kotlinx.coroutines.internal
+
+        public class Symbol(public val symbol: String) {
+            public fun labelText(): String = "<" + symbol + ">"
+        }
+
+        """
+        let config = kcpp.CppTargetConfig(
+            cppStandard: 23,
+            gcMode: kcpp.CppGcMode.NONE,
+            portLintPrefix: nil,
+            sourceRootPrefix: nil,
+            rootNamespaceOverride: nil,
+            emitCompanionCAbiFiles: false
+        )
+        let result = kcpp.translateKotlinToCpp(
+            source: kotlinSource,
+            sourcePath: "internal/Symbol.kt",
+            config: config
+        )
+        #expect(result.headerArtifact.relativePath == "kotlinx/coroutines/internal/Symbol.hpp")
+        #expect(result.headerArtifact.content.contains("#pragma once"))
+        #expect(result.headerArtifact.content.contains("namespace kotlinx::coroutines::internal"))
+        #expect(result.headerArtifact.content.contains("explicit Symbol(std::string symbol_value);"))
+        #expect(result.sourceArtifact?.relativePath == "kotlinx/coroutines/internal/Symbol.cpp")
+        #expect(result.translatedDeclarationCount == 1)
+    }
 }
