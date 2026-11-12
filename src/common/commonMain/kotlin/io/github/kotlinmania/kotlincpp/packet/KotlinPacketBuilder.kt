@@ -283,11 +283,15 @@ private class KotlinFrameTreeBuilder(
             }
         }
 
+        val minTopDeclPkt = (children.lastOrNull()?.lastPacketIndex ?: -1) + 1
+        val topDecls = ArrayList<FrameDraft>()
         for (topObj in ctx.topLevelObject()) {
             topObj.declaration()?.let { decl ->
-                buildDeclaration(decl)?.let { children.add(it) }
+                buildDeclaration(decl)?.let { topDecls.add(it) }
             }
         }
+        attachLeadingDeclarationComments(topDecls, minTopDeclPkt)
+        children.addAll(topDecls)
 
         return FrameDraft(
             nodeTypeId = KtNodeTypes.KT_FILE_ID,
@@ -579,6 +583,7 @@ private class KotlinFrameTreeBuilder(
         ctx.getRuleContextOfType<KotlinParser.ClassMemberDeclarationsContext>(0)?.let { decls ->
             appendClassMemberDeclarations(decls, members)
         }
+        attachLeadingDeclarationComments(members, b.first + 1)
         return FrameDraft(KtNodeTypes.CLASS_BODY_ID, b.first, b.second, members)
     }
 
@@ -626,7 +631,66 @@ private class KotlinFrameTreeBuilder(
         ctx.getRuleContextOfType<KotlinParser.ClassMemberDeclarationsContext>(0)?.let { decls ->
             appendClassMemberDeclarations(decls, members)
         }
+        attachLeadingDeclarationComments(members, b.first + 1)
         return FrameDraft(KtNodeTypes.CLASS_BODY_ID, b.first, b.second, members)
+    }
+
+    private fun attachLeadingDeclarationComments(
+        drafts: MutableList<FrameDraft>,
+        minPacketIndex: Int,
+    ) {
+        for (i in drafts.indices) {
+            val draft = drafts[i]
+            val rawFloor = if (i == 0) minPacketIndex else drafts[i - 1].lastPacketIndex + 1
+            var attachedStart = draft.firstPacketIndex
+            var cursor = draft.firstPacketIndex - 1
+            while (cursor >= rawFloor) {
+                when (val pkt = packets[cursor]) {
+                    is SyntaxPacket.WhitespacePacket -> {
+                        if (pkt.rawText.count { it == '\n' } >= 2) {
+                            break
+                        }
+                        cursor -= 1
+                    }
+                    is SyntaxPacket.CommentPacket -> {
+                        if (pkt.kind == CommentPacketKind.SHEBANG || pkt.portLintDirectiveKind != null) {
+                            break
+                        }
+                        if (pkt.kind == CommentPacketKind.KDOC || isLeadingOnItsLine(cursor)) {
+                            attachedStart = cursor
+                            cursor -= 1
+                        } else {
+                            break
+                        }
+                    }
+                    else -> break
+                }
+            }
+            if (attachedStart < draft.firstPacketIndex) {
+                drafts[i] =
+                    FrameDraft(
+                        nodeTypeId = draft.nodeTypeId,
+                        firstPacketIndex = attachedStart,
+                        lastPacketIndex = draft.lastPacketIndex,
+                        children = draft.children,
+                        flags = draft.flags,
+                        semanticInfo = draft.semanticInfo,
+                    )
+            }
+        }
+    }
+
+    private fun isLeadingOnItsLine(packetIndex: Int): Boolean {
+        val targetLine = packets[packetIndex].span.startLine
+        var p = packetIndex - 1
+        while (p >= 0 && packets[p].span.endLine == targetLine) {
+            val earlier = packets[p]
+            if (earlier !is SyntaxPacket.WhitespacePacket && earlier !is SyntaxPacket.CommentPacket) {
+                return false
+            }
+            p -= 1
+        }
+        return true
     }
 
     private fun appendClassMemberDeclarations(
