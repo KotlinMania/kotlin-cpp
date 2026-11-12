@@ -11,7 +11,10 @@ class KotlinTokenInspectionTest {
             val messages = mutableListOf<String>()
             runSingleFileCommand(
                 arrayOf("tokens", "Answer.kt"),
-                read = { path -> assertEquals("Answer.kt", path); source },
+                read = { path ->
+                    assertEquals("Answer.kt", path)
+                    source
+                },
                 isDirectory = { false },
                 write = { _, _ -> error("Token inspection must not write files") },
                 writeForce = { _, _ -> error("Token inspection must not overwrite files") },
@@ -20,8 +23,10 @@ class KotlinTokenInspectionTest {
             return messages
         }
         val messages = inspect()
-        assertEquals(listOf("association\tfun\tToken![fn]\t1", "association\treturn\tToken![return]\t1"),
-            messages.filter { it.startsWith("association\t") })
+        assertEquals(
+            listOf("association\tfun\tToken![fn]\t1", "association\treturn\tToken![return]\t1"),
+            messages.filter { it.startsWith("association\t") },
+        )
         assertEquals(messages, inspect())
     }
 }
