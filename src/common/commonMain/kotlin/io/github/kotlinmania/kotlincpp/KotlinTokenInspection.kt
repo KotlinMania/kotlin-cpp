@@ -34,7 +34,7 @@ public fun summarizeKotlinTokens(
             when (tree) {
                 is TokenTree.Group -> {
                     groupTokens += 1
-                    countStream(tree.group.stream())
+                    countStream(tree.value.stream())
                 }
                 is TokenTree.Ident,
                 is TokenTree.Literal,

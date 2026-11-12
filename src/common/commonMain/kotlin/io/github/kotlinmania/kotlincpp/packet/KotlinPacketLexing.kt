@@ -78,7 +78,7 @@ internal object KotlinPacketLexing {
         parser.addErrorListener(errorListener)
         val fileCtx = parser.kotlinFile()
 
-        val allTokens = tokenStream.tokens
+        val allTokens = tokenStream.allTokens()
         val nonEofCount =
             if (allTokens.isNotEmpty() && allTokens.last().type == Token.EOF) {
                 allTokens.size - 1
@@ -787,7 +787,7 @@ internal object KotlinPacketLexing {
                 }
                 val kwId =
                     if (marks.funModifierTokens[tokIdx]) {
-                        KtTokens.FUN_MODIFIER_ID
+                        KtTokens.FUN_KEYWORD_ID
                     } else {
                         mapKeywordId(type)
                     }
@@ -1318,10 +1318,10 @@ internal object KotlinPacketLexing {
             KotlinLexer.Tokens.OBJECT -> KtTokens.OBJECT_KEYWORD_ID
             KotlinLexer.Tokens.VAL -> KtTokens.VAL_KEYWORD_ID
             KotlinLexer.Tokens.VAR -> KtTokens.VAR_KEYWORD_ID
-            KotlinLexer.Tokens.TYPE_ALIAS -> KtTokens.TYPE_ALIAS_KEYWORD_ID
+            KotlinLexer.Tokens.TYPE_ALIAS -> KtTokens.TYPEALIAS_KEYWORD_ID
             KotlinLexer.Tokens.CONSTRUCTOR -> KtTokens.CONSTRUCTOR_KEYWORD_ID
             KotlinLexer.Tokens.BY -> KtTokens.BY_KEYWORD_ID
-            KotlinLexer.Tokens.COMPANION -> KtTokens.COMPANION_KEYWORD_ID
+            KotlinLexer.Tokens.COMPANION -> KtTokens.COMPANION_MODIFIER_ID
             KotlinLexer.Tokens.INIT -> KtTokens.INIT_KEYWORD_ID
             KotlinLexer.Tokens.THIS -> KtTokens.THIS_KEYWORD_ID
             KotlinLexer.Tokens.SUPER -> KtTokens.SUPER_KEYWORD_ID
@@ -1343,12 +1343,12 @@ internal object KotlinPacketLexing {
             KotlinLexer.Tokens.AS -> KtTokens.AS_KEYWORD_ID
             KotlinLexer.Tokens.IS -> KtTokens.IS_KEYWORD_ID
             KotlinLexer.Tokens.IN -> KtTokens.IN_KEYWORD_ID
-            KotlinLexer.Tokens.OUT -> KtTokens.OUT_KEYWORD_ID
+            KotlinLexer.Tokens.OUT -> KtTokens.OUT_MODIFIER_ID
             KotlinLexer.Tokens.DYNAMIC -> KtTokens.DYNAMIC_KEYWORD_ID
-            KotlinLexer.Tokens.PUBLIC -> KtTokens.PUBLIC_KEYWORD_ID
-            KotlinLexer.Tokens.PRIVATE -> KtTokens.PRIVATE_KEYWORD_ID
-            KotlinLexer.Tokens.PROTECTED -> KtTokens.PROTECTED_KEYWORD_ID
-            KotlinLexer.Tokens.INTERNAL -> KtTokens.INTERNAL_KEYWORD_ID
+            KotlinLexer.Tokens.PUBLIC -> KtTokens.PUBLIC_MODIFIER_ID
+            KotlinLexer.Tokens.PRIVATE -> KtTokens.PRIVATE_MODIFIER_ID
+            KotlinLexer.Tokens.PROTECTED -> KtTokens.PROTECTED_MODIFIER_ID
+            KotlinLexer.Tokens.INTERNAL -> KtTokens.INTERNAL_MODIFIER_ID
             KotlinLexer.Tokens.ENUM -> KtTokens.ENUM_MODIFIER_ID
             KotlinLexer.Tokens.SEALED -> KtTokens.SEALED_MODIFIER_ID
             KotlinLexer.Tokens.ANNOTATION -> KtTokens.ANNOTATION_MODIFIER_ID
@@ -1378,10 +1378,10 @@ internal object KotlinPacketLexing {
 
     internal fun keywordPacketFlags(keywordId: Int): Long =
         when (keywordId) {
-            KtTokens.PUBLIC_KEYWORD_ID -> PacketFlags.MOD_PUBLIC
-            KtTokens.INTERNAL_KEYWORD_ID -> PacketFlags.MOD_INTERNAL
-            KtTokens.PROTECTED_KEYWORD_ID -> PacketFlags.MOD_PROTECTED
-            KtTokens.PRIVATE_KEYWORD_ID -> PacketFlags.MOD_PRIVATE
+            KtTokens.PUBLIC_MODIFIER_ID -> PacketFlags.MOD_PUBLIC
+            KtTokens.INTERNAL_MODIFIER_ID -> PacketFlags.MOD_INTERNAL
+            KtTokens.PROTECTED_MODIFIER_ID -> PacketFlags.MOD_PROTECTED
+            KtTokens.PRIVATE_MODIFIER_ID -> PacketFlags.MOD_PRIVATE
             KtTokens.SUSPEND_MODIFIER_ID -> PacketFlags.MOD_SUSPEND
             KtTokens.INLINE_MODIFIER_ID -> PacketFlags.MOD_INLINE
             KtTokens.NOINLINE_MODIFIER_ID -> PacketFlags.MOD_NOINLINE
@@ -1394,7 +1394,7 @@ internal object KotlinPacketLexing {
             KtTokens.DATA_MODIFIER_ID -> PacketFlags.MOD_DATA
             KtTokens.VALUE_MODIFIER_ID -> PacketFlags.MOD_VALUE
             KtTokens.CONST_MODIFIER_ID -> PacketFlags.MOD_CONST
-            KtTokens.COMPANION_KEYWORD_ID -> PacketFlags.MOD_COMPANION
+            KtTokens.COMPANION_MODIFIER_ID -> PacketFlags.MOD_COMPANION
             KtTokens.EXTERNAL_MODIFIER_ID -> PacketFlags.MOD_EXTERNAL_OR_EXTENSION
             else -> PacketFlags.NONE
         }

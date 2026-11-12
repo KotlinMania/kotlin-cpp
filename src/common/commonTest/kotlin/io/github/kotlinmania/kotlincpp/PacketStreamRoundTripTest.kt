@@ -9,7 +9,11 @@ import io.github.kotlinmania.kotlincpp.packet.SyntaxPacket
 import io.github.kotlinmania.kotlincpp.packet.buildKotlinPacketStream
 import io.github.kotlinmania.procmacro2.Delimiter
 import io.github.kotlinmania.procmacro2.TokenTree
-import io.github.kotlinmania.syn.token.Token
+import io.github.kotlinmania.syn.token.Async
+import io.github.kotlinmania.syn.token.Fn
+import io.github.kotlinmania.syn.token.Let
+import io.github.kotlinmania.syn.token.Pub
+import io.github.kotlinmania.syn.token.Return
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -71,7 +75,7 @@ class PacketStreamRoundTripTest {
         assertEquals(listOf("when", "when"), escapedParams.map { it.unescapedName })
         assertEquals(SymbolRole.PARAM, escapedParams.first().role)
         val escapedIdentTree = assertIs<TokenTree.Ident>(assertNotNull(escapedParams.first().procMacroToken))
-        assertEquals("r#when", escapedIdentTree.ident.toString())
+        assertEquals("when", escapedIdentTree.value.toString())
 
         // Verify universal syn-kotlin token attachments on keywords
         val kwByText =
@@ -79,21 +83,21 @@ class PacketStreamRoundTripTest {
                 .filterIsInstance<SyntaxPacket.KeywordPacket>()
                 .associateBy { it.rawText }
         assertEquals("Token![pub]", kwByText.getValue("public").universalSynToken)
-        assertIs<Token.Pub>(kwByText.getValue("public").synToken)
+        assertIs<Pub>(kwByText.getValue("public").synToken)
         assertEquals("Token![async]", kwByText.getValue("suspend").universalSynToken)
-        assertIs<Token.Async>(kwByText.getValue("suspend").synToken)
+        assertIs<Async>(kwByText.getValue("suspend").synToken)
         assertEquals("Token![fn]", kwByText.getValue("fun").universalSynToken)
-        assertIs<Token.Fn>(kwByText.getValue("fun").synToken)
+        assertIs<Fn>(kwByText.getValue("fun").synToken)
         assertEquals("Token![let]", kwByText.getValue("val").universalSynToken)
-        assertIs<Token.Let>(kwByText.getValue("val").synToken)
+        assertIs<Let>(kwByText.getValue("val").synToken)
         assertEquals("Token![return]", kwByText.getValue("return").universalSynToken)
-        assertIs<Token.Return>(kwByText.getValue("return").synToken)
+        assertIs<Return>(kwByText.getValue("return").synToken)
 
         // Verify hierarchical proc-macro2-kotlin TokenStream contains Parenthesis and Brace Groups
         val universalStream = stream.toUniversalTokenStream()
         val topGroups = universalStream.filterIsInstance<TokenTree.Group>()
-        assertTrue(topGroups.any { it.group.delimiter() == Delimiter.Parenthesis })
-        assertTrue(topGroups.any { it.group.delimiter() == Delimiter.Brace })
+        assertTrue(topGroups.any { it.value.delimiter() == Delimiter.Parenthesis })
+        assertTrue(topGroups.any { it.value.delimiter() == Delimiter.Brace })
 
         val hexUnsignedLit =
             stream.packets
