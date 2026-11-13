@@ -57,7 +57,6 @@ public class PacketFrame internal constructor(
  */
 public class PacketStream(
     public val sourcePath: String,
-    public val sourceText: String,
     public val packets: List<SyntaxPacket>,
     public val frames: List<PacketFrame>,
     public val rootFrameIndex: Int,
@@ -65,9 +64,9 @@ public class PacketStream(
     public val rootFrame: PacketFrame
         get() = frames[rootFrameIndex]
 
-    /** Concatenates [SyntaxPacket.rawText] across all leaf packets; always equals [sourceText]. */
+    /** Concatenates [SyntaxPacket.rawText] across all leaf packets; reconstructs exact source purely from packets. */
     public fun renderRawLossless(): String =
-        buildString(sourceText.length) {
+        buildString(packets.sumOf { it.rawText.length }) {
             for (packet in packets) {
                 append(packet.rawText)
             }

@@ -44,6 +44,7 @@ internal data class KtClassSymbol(
     val kind: KtClassKind,
     val frameIndex: Int,
     val enclosingClassFrameIndex: Int?,
+    val isInner: Boolean = false,
     val typeParams: List<KtTypeParamInfo>,
     val primaryConstructorParams: List<KtValueParamInfo>,
     val superTypeFrameIndices: List<Int>,
@@ -638,6 +639,10 @@ internal object SameFileSymbolPass {
         declFrame.semanticInfo =
             (declFrame.semanticInfo ?: FrameSemanticInfo()).copy(symbolName = cppName)
 
+        val isInner =
+            enclosingClassFrameIndex != null &&
+                FrameAstHelpers.hasModifierKeyword(stream, declFrame, KtTokens.INNER_MODIFIER_ID)
+
         val preliminarySymbol =
             KtClassSymbol(
                 kotlinName = kotlinName,
@@ -645,6 +650,7 @@ internal object SameFileSymbolPass {
                 kind = finalKind,
                 frameIndex = declFrame.frameIndex,
                 enclosingClassFrameIndex = enclosingClassFrameIndex,
+                isInner = isInner,
                 typeParams = typeParams,
                 primaryConstructorParams = ctorParams,
                 superTypeFrameIndices = superTypes,

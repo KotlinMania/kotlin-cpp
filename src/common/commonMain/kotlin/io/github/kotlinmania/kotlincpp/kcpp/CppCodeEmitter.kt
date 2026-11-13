@@ -1,6 +1,7 @@
 package io.github.kotlinmania.kotlincpp.kcpp
 
 import io.github.kotlinmania.kotlincpp.packet.KtNodeTypes
+import io.github.kotlinmania.kotlincpp.packet.KtTokens
 import io.github.kotlinmania.kotlincpp.packet.PacketFlags
 import io.github.kotlinmania.kotlincpp.packet.PacketFrame
 import io.github.kotlinmania.kotlincpp.packet.PacketStream
@@ -63,6 +64,11 @@ public fun translateKotlinToCpp(
             typeParamNames = globalTypeParams,
         )
 
+    val knownFnNames = LinkedHashSet<String>()
+    for (fn in symbols.functionsByFrame.values) {
+        knownFnNames.add(fn.kotlinName)
+    }
+
     val headerBundle =
         LoweringBundle(
             stream = stream,
@@ -75,6 +81,7 @@ public fun translateKotlinToCpp(
             cfPlan = cfPlan,
             includes = headerIncludes,
             typeTranslator = headerTypeTranslator,
+            knownFunctionNames = knownFnNames,
         )
     val sourceBundle =
         LoweringBundle(
@@ -88,6 +95,7 @@ public fun translateKotlinToCpp(
             cfPlan = cfPlan,
             includes = sourceIncludes,
             typeTranslator = sourceTypeTranslator,
+            knownFunctionNames = knownFnNames,
         )
 
     val headerBodyText = CppDeclarationRenderer(headerBundle, isHeaderMode = true).renderBodySection()
@@ -150,7 +158,6 @@ private fun assembleHeaderFile(
                 .append(symbols.portLintSourcePath)
                 .append('\n')
         }
-        append("/** Transliterated from: ").append(symbols.transliteratedFromPath).append(" */\n")
 
         for (sysHdr in includes.sortedSystemHeaders()) {
             append("#include <").append(sysHdr).append(">\n")
@@ -168,6 +175,10 @@ private fun assembleHeaderFile(
             append("\nnamespace ").append(nsJoined).append(" {\n\n")
         } else {
             append('\n')
+        }
+
+        if (includes.needsCollectionAlias) {
+            append("template <typename E>\nusing Collection = std::vector<E>;\n\n")
         }
 
         append(bodyText.trimEnd()).append('\n')
@@ -190,7 +201,6 @@ private fun assembleSourceFile(
                 .append(symbols.portLintSourcePath)
                 .append('\n')
         }
-        append("/** Transliterated from: ").append(symbols.transliteratedFromPath).append(" */\n")
         append("#include \"").append(symbols.headerRelativePath).append("\"\n")
         for (sysHdr in includes.sortedSystemHeaders()) {
             append("#include <").append(sysHdr).append(">\n")
@@ -269,7 +279,13 @@ private class CppDeclarationRenderer(
                 if (pktIdx > afterPreamblePacket && pktIdx < firstDeclPacket) {
                     val pkt = stream.packets[pktIdx]
                     if (pkt is SyntaxPacket.CommentPacket && pkt.portLintDirectiveKind == null) {
-                        val text = FrameAstHelpers.formatCommentForCpp(pkt, "")
+                        val text =
+                            FrameAstHelpers.formatCommentForCpp(
+                                comment = pkt,
+                                indent = "",
+                                knownFunctionNames = bundle.knownFunctionNames,
+                                allowFenceTranslation = !bundle.isDocExample,
+                            )
                         if (text.isNotEmpty()) {
                             out.append(text).append("\n\n")
                         }
@@ -304,13 +320,19 @@ private class CppDeclarationRenderer(
         buildString {
             if (includeLeadingKdoc) {
                 for (c in FrameAstHelpers.extractLeadingDeclarationComments(stream, declFrame)) {
-                    val formatted = FrameAstHelpers.formatCommentForCpp(c, indent)
+                    val formatted =
+                        FrameAstHelpers.formatCommentForCpp(
+                            comment = c,
+                            indent = indent,
+                            knownFunctionNames = bundle.knownFunctionNames,
+                            allowFenceTranslation = !bundle.isDocExample,
+                        )
                     if (formatted.isNotEmpty()) {
                         append(formatted).append('\n')
                     }
                 }
             }
-            if (PacketFlags.hasFlag(declFrame.flags, PacketFlags.EMIT_PROVENANCE_COMMENT)) {
+            if (!bundle.isDocExample && PacketFlags.hasFlag(declFrame.flags, PacketFlags.EMIT_PROVENANCE_COMMENT)) {
                 append(indent)
                     .append("// Transliterated from: ")
                     .append(symbols.transliteratedFromPath)
@@ -371,8 +393,14 @@ private class CppDeclarationRenderer(
                 } ?: "auto"
             val recvParam =
                 sym.receiverTypeFrameIndex?.let {
-                    val rType = bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.PARAMETER)
-                    "$rType self"
+                    val rType = bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.EXTENSION_RECEIVER)
+                    val passType =
+                        if (rType in VALUE_PASS_CPP_TYPES || rType.endsWith("&") || rType.endsWith("*")) {
+                            rType
+                        } else {
+                            "const $rType&"
+                        }
+                    "$passType self"
                 }
 
             if (isHeaderMode) {
@@ -894,7 +922,7 @@ private class CppDeclarationRenderer(
     ): String {
         val parts = ArrayList<String>(sym.valueParams.size + 1)
         if (sym.receiverTypeFrameIndex != null) {
-            val rType = bundle.typeTranslator.translateTypeFrame(stream.frames[sym.receiverTypeFrameIndex], CppTypePosition.PARAMETER)
+            val rType = bundle.typeTranslator.translateTypeFrame(stream.frames[sym.receiverTypeFrameIndex], CppTypePosition.EXTENSION_RECEIVER)
             val passType =
                 if (rType in VALUE_PASS_CPP_TYPES || rType.endsWith("&") || rType.endsWith("*")) {
                     rType
@@ -952,7 +980,7 @@ private class CppDeclarationRenderer(
         sym: KtFunctionSymbol,
         enclosingClass: KtClassSymbol?,
     ): Boolean {
-        if (enclosingClass == null) return false
+        if (enclosingClass == null || enclosingClass.isInner) return false
         if (enclosingClass.kind == KtClassKind.INTERFACE ||
             enclosingClass.kind == KtClassKind.OBJECT_SINGLETON ||
             enclosingClass.kind == KtClassKind.COMPANION_OBJECT
@@ -974,13 +1002,15 @@ private class CppDeclarationRenderer(
         if (frame.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
             val ch = FrameAstHelpers.childFrames(stream, frame)
             if (ch.size >= 3) {
-                val op = FrameAstHelpers.frameSourceSlice(stream, ch[1]).trim()
-                if (op in setOf("=", "+=", "-=", "*=", "/=", "%=")) {
-                    val lhsText = FrameAstHelpers.frameSourceSlice(stream, ch[0]).trim().removePrefix("this.")
-                    val isMember =
-                        cls.primaryConstructorParams.any { it.name == lhsText } ||
-                            cls.memberPropertyFrameIndices.any { symbols.propertiesByFrame[it]?.kotlinName == lhsText }
-                    if (isMember) return true
+                val opId = FrameAstHelpers.operationTokenId(stream, ch[1])
+                if (opId in ASSIGN_OPERATOR_IDS) {
+                    val lhsMember = extractAssignedMemberSimpleName(ch[0])
+                    if (lhsMember != null) {
+                        val isMember =
+                            cls.primaryConstructorParams.any { it.name == lhsMember } ||
+                                cls.memberPropertyFrameIndices.any { symbols.propertiesByFrame[it]?.kotlinName == lhsMember }
+                        if (isMember) return true
+                    }
                 }
             }
         }
@@ -989,6 +1019,21 @@ private class CppDeclarationRenderer(
         }
         return false
     }
+
+    private fun extractAssignedMemberSimpleName(lhsFrame: PacketFrame): String? =
+        when (lhsFrame.nodeTypeId) {
+            KtNodeTypes.REFERENCE_EXPRESSION_ID ->
+                FrameAstHelpers.directIdentPacket(stream, lhsFrame)?.unescapedName
+            KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID -> {
+                val parts = FrameAstHelpers.childFrames(stream, lhsFrame)
+                if (parts.size == 2 && parts[0].nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID) {
+                    FrameAstHelpers.directIdentPacket(stream, parts[1])?.unescapedName
+                } else {
+                    null
+                }
+            }
+            else -> null
+        }
 
     private fun inferExpressionBodyReturnType(exprFrame: PacketFrame): String =
         when (exprFrame.nodeTypeId) {
@@ -1052,7 +1097,13 @@ private class CppDeclarationRenderer(
             for ((idx, entry) in cls.enumEntries.withIndex()) {
                 val entryFrame = stream.frames[entry.frameIndex]
                 for (c in FrameAstHelpers.extractLeadingDeclarationComments(stream, entryFrame)) {
-                    val formatted = FrameAstHelpers.formatCommentForCpp(c, inner)
+                    val formatted =
+                        FrameAstHelpers.formatCommentForCpp(
+                            comment = c,
+                            indent = inner,
+                            knownFunctionNames = bundle.knownFunctionNames,
+                            allowFenceTranslation = !bundle.isDocExample,
+                        )
                     if (formatted.isNotEmpty()) {
                         if (idx > 0) append('\n')
                         append(formatted).append('\n')
@@ -1432,6 +1483,12 @@ private class CppDeclarationRenderer(
                 .append(" {\n")
 
             // Private fields first (`snake_case_`)
+            val outerCls =
+                if (cls.isInner && cls.enclosingClassFrameIndex != null) {
+                    symbols.classesByFrame[cls.enclosingClassFrameIndex]
+                } else {
+                    null
+                }
             val privateCtorProps =
                 cls.primaryConstructorParams.filter {
                     (it.isVal || it.isVar) && PacketFlags.hasFlag(stream.frames[it.frameIndex].flags, PacketFlags.MOD_PRIVATE)
@@ -1441,8 +1498,13 @@ private class CppDeclarationRenderer(
                     val p = symbols.propertiesByFrame[pIdx]
                     p != null && !p.isConst && PacketFlags.hasFlag(p.flags, PacketFlags.MOD_PRIVATE) && p.getterFrameIndex == null
                 }
-            if (privateCtorProps.isNotEmpty() || privateMemberProps.isNotEmpty()) {
+            if (outerCls != null || privateCtorProps.isNotEmpty() || privateMemberProps.isNotEmpty()) {
                 append(indent).append("private:\n")
+                if (outerCls != null) {
+                    append(inner)
+                        .append(outerCls.cppName)
+                        .append("* outer_;\n")
+                }
                 for (cp in privateCtorProps) {
                     val t =
                         cp.typeFrameIndex?.let {
@@ -1494,19 +1556,24 @@ private class CppDeclarationRenderer(
             }
 
             // Primary constructor declaration / inline body
-            if (cls.primaryConstructorParams.isNotEmpty() || cls.superCallArgsBySuperIndex.isNotEmpty()) {
+            val totalCtorParams = (if (outerCls != null) 1 else 0) + cls.primaryConstructorParams.size
+            if (totalCtorParams > 0 || cls.superCallArgsBySuperIndex.isNotEmpty()) {
                 val ctorVis = if (cls.kind == KtClassKind.SEALED_CLASS) "${indent}protected:\n$inner" else "\n$inner"
-                val explicitKw = if (cls.primaryConstructorParams.size == 1) "explicit " else ""
-                val emitter = CppExprAndStmtEmitter(bundle)
-                val ctorSigParams =
-                    cls.primaryConstructorParams.joinToString(", ") { cp ->
-                        val t =
-                            cp.typeFrameIndex?.let {
-                                bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.VALUE)
-                            } ?: "std::any"
-                        val def = cp.defaultExprFrameIndex?.let { " = ${emitter.emitExpression(stream.frames[it])}" }.orEmpty()
-                        "$t ${cp.cppName}_value$def"
-                    }
+                val explicitKw = if (totalCtorParams == 1) "explicit " else ""
+                val emitter = CppExprAndStmtEmitter(bundle, enclosingClass = cls)
+                val sigParts = ArrayList<String>(totalCtorParams)
+                if (outerCls != null) {
+                    sigParts.add("${outerCls.cppName}* outer_value")
+                }
+                for (cp in cls.primaryConstructorParams) {
+                    val t =
+                        cp.typeFrameIndex?.let {
+                            bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.VALUE)
+                        } ?: "std::any"
+                    val def = cp.defaultExprFrameIndex?.let { " = ${emitter.emitExpression(stream.frames[it])}" }.orEmpty()
+                    sigParts.add("$t ${cp.cppName}_value$def")
+                }
+                val ctorSigParams = sigParts.joinToString(", ")
                 append(ctorVis)
                     .append(explicitKw)
                     .append(cls.cppName)
@@ -1572,7 +1639,31 @@ private class CppDeclarationRenderer(
                 append(indent).append("public:\n")
             }
 
-            // Nested classes (defer subclasses that inherit from `cls` until after `cls` is complete!)
+            // Nested classes (forward-declare sibling nested classes referenced earlier & defer subclasses of `cls`)
+            if (cls.memberClassFrameIndices.size > 1) {
+                for ((pos, nestedIdx) in cls.memberClassFrameIndices.withIndex()) {
+                    val siblingCls = symbols.classesByFrame[nestedIdx] ?: continue
+                    val referencedBefore =
+                        cls.memberClassFrameIndices.subList(0, pos).any { earlierIdx ->
+                            frameMentionsIdentifier(stream.frames[earlierIdx], siblingCls.kotlinName)
+                        }
+                    if (referencedBefore && !inheritsFromEnclosing(siblingCls, cls)) {
+                        append('\n')
+                        append(renderTemplatePrefix(siblingCls.typeParams, inner))
+                        val kw =
+                            if (siblingCls.kind == KtClassKind.SIMPLE_ENUM || siblingCls.kind == KtClassKind.RICH_ENUM) {
+                                "enum class"
+                            } else {
+                                "class"
+                            }
+                        append(inner)
+                            .append(kw)
+                            .append(' ')
+                            .append(siblingCls.cppName)
+                            .append(";\n")
+                    }
+                }
+            }
             val deferredOutOfLineNested = ArrayList<Int>()
             for (nestedIdx in cls.memberClassFrameIndices) {
                 val nestedCls = symbols.classesByFrame[nestedIdx]
@@ -1662,12 +1753,26 @@ private class CppDeclarationRenderer(
         return " : ${bases.joinToString(", ")}"
     }
 
+    private fun frameMentionsIdentifier(
+        frame: PacketFrame,
+        identName: String,
+    ): Boolean {
+        if (frame.firstPacketIndex > frame.lastPacketIndex) return false
+        for (idx in frame.firstPacketIndex..frame.lastPacketIndex) {
+            val pkt = stream.packets[idx]
+            if (pkt is SyntaxPacket.IdentPacket && pkt.unescapedName == identName) {
+                return true
+            }
+        }
+        return false
+    }
+
     private fun buildConstructorInitializerList(
         cls: KtClassSymbol,
         suffix: String,
     ): List<String> {
         val inits = ArrayList<String>()
-        val emitter = CppExprAndStmtEmitter(bundle)
+        val emitter = CppExprAndStmtEmitter(bundle, enclosingClass = cls)
         for (cp in cls.primaryConstructorParams) {
             emitter.bindLocalName(cp.name, "${cp.cppName}$suffix")
         }
@@ -1684,16 +1789,35 @@ private class CppDeclarationRenderer(
                     }
             inits.add("$baseName(${args.joinToString(", ")})")
         }
+        if (cls.isInner && cls.enclosingClassFrameIndex != null) {
+            inits.add("outer_(outer_value)")
+        }
         for (cp in cls.primaryConstructorParams) {
             if (!cp.isVal && !cp.isVar) continue
-            val isPriv = PacketFlags.hasFlag(stream.frames[cp.frameIndex].flags, PacketFlags.MOD_PRIVATE)
-            val fieldName = if (isPriv) CppNamingPolicy.toPrivateFieldName(cp.name) else cp.cppName
-            inits.add("$fieldName(std::move(${cp.cppName}$suffix))")
+            if (PacketFlags.hasFlag(stream.frames[cp.frameIndex].flags, PacketFlags.MOD_PRIVATE)) {
+                inits.add("${CppNamingPolicy.toPrivateFieldName(cp.name)}(std::move(${cp.cppName}$suffix))")
+            }
+        }
+        for (cp in cls.primaryConstructorParams) {
+            if (!cp.isVal && !cp.isVar) continue
+            if (!PacketFlags.hasFlag(stream.frames[cp.frameIndex].flags, PacketFlags.MOD_PRIVATE)) {
+                inits.add("${cp.cppName}(std::move(${cp.cppName}$suffix))")
+            }
         }
         return inits
     }
 
     companion object {
+        private val ASSIGN_OPERATOR_IDS: Set<Int> =
+            setOf(
+                KtTokens.EQ_ID,
+                KtTokens.PLUSEQ_ID,
+                KtTokens.MINUSEQ_ID,
+                KtTokens.MULTEQ_ID,
+                KtTokens.DIVEQ_ID,
+                KtTokens.PERCEQ_ID,
+            )
+
         private val VALUE_PASS_CPP_TYPES: Set<String> =
             setOf(
                 "bool",
@@ -1788,3 +1912,78 @@ private fun mapCTypeForPlainC(cppType: String): String =
         .replace("std::size_t", "size_t")
         .replace("std::intptr_t", "intptr_t")
         .replace("std::uintptr_t", "uintptr_t")
+
+internal fun renderDocExampleFromPacketStream(stream: PacketStream): Pair<String, String> {
+    val config = CppTargetConfig()
+    val symbols = SameFileSymbolPass.run(stream = stream, config = config)
+    val suspendPlan = SuspendStateMachinePass.run(stream = stream, symbols = symbols)
+    val gcPlan = GcAndOwnershipPass.run(stream = stream, config = config, symbols = symbols, suspendPlan = suspendPlan)
+    val atomicPlan = AtomicAndThreadLocalPass.run(stream = stream, config = config, symbols = symbols)
+    val ffiPlan = FfiAndCTypePass.run(stream = stream, symbols = symbols, suspendPlan = suspendPlan)
+    val cfPlan = ControlFlowAndTypePass.run(stream = stream, symbols = symbols)
+
+    val headerIncludes = CppIncludeCollector(selfHeaderPath = symbols.headerRelativePath)
+    val sourceIncludes = CppIncludeCollector(selfHeaderPath = "")
+    val globalTypeParams = LinkedHashSet<String>()
+    for (cls in symbols.classesByFrame.values) {
+        for (tp in cls.typeParams) globalTypeParams.add(tp.name)
+    }
+    for (fn in symbols.functionsByFrame.values) {
+        for (tp in fn.typeParams) globalTypeParams.add(tp.name)
+    }
+    for (ta in symbols.typeAliasesByFrame.values) {
+        for (tp in ta.typeParams) globalTypeParams.add(tp.name)
+    }
+    val knownFnNames = LinkedHashSet<String>()
+    for (fn in symbols.functionsByFrame.values) {
+        knownFnNames.add(fn.kotlinName)
+    }
+
+    val headerBundle =
+        LoweringBundle(
+            stream = stream,
+            config = config,
+            symbols = symbols,
+            suspendPlan = suspendPlan,
+            gcPlan = gcPlan,
+            atomicPlan = atomicPlan,
+            ffiPlan = ffiPlan,
+            cfPlan = cfPlan,
+            includes = headerIncludes,
+            typeTranslator =
+                CppTypeTranslator(
+                    stream = stream,
+                    config = config,
+                    includes = headerIncludes,
+                    polymorphicTypeNames = symbols.polymorphicTypeNames,
+                    typeParamNames = globalTypeParams,
+                ),
+            knownFunctionNames = knownFnNames,
+            isDocExample = true,
+        )
+    val sourceBundle =
+        LoweringBundle(
+            stream = stream,
+            config = config,
+            symbols = symbols,
+            suspendPlan = suspendPlan,
+            gcPlan = gcPlan,
+            atomicPlan = atomicPlan,
+            ffiPlan = ffiPlan,
+            cfPlan = cfPlan,
+            includes = sourceIncludes,
+            typeTranslator =
+                CppTypeTranslator(
+                    stream = stream,
+                    config = config,
+                    includes = sourceIncludes,
+                    polymorphicTypeNames = symbols.polymorphicTypeNames,
+                    typeParamNames = globalTypeParams,
+                ),
+            knownFunctionNames = knownFnNames,
+            isDocExample = true,
+        )
+    val headerBody = CppDeclarationRenderer(headerBundle, isHeaderMode = true).renderBodySection()
+    val sourceBody = CppDeclarationRenderer(sourceBundle, isHeaderMode = false).renderBodySection()
+    return headerBody to sourceBody
+}

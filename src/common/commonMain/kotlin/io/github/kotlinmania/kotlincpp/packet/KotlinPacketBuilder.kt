@@ -17,12 +17,24 @@ public fun buildKotlinPacketStream(
     sourcePath: String = "<memory>",
 ): PacketStream {
     val parsed = KotlinPacketLexing.lexAndParse(source, sourcePath)
-    val builder = KotlinFrameTreeBuilder(parsed, sourcePath, source)
+    val builder = KotlinFrameTreeBuilder(parsed, sourcePath)
     val stream = builder.buildStream()
     check(stream.renderRawLossless() == source) {
         "$sourcePath: lossless packet render mismatch"
     }
     verifyExactPacketPartition(stream)
+    return stream
+}
+
+internal fun buildKotlinPacketStreamOrNull(
+    source: String,
+    sourcePath: String = "<doc>",
+): PacketStream? {
+    if (source.contains("// port-lint: ignore")) return null
+    val parsed = KotlinPacketLexing.lexAndParseOrNull(source, sourcePath) ?: return null
+    val builder = KotlinFrameTreeBuilder(parsed, sourcePath)
+    val stream = builder.buildStream()
+    if (stream.renderRawLossless() != source) return null
     return stream
 }
 
@@ -38,7 +50,6 @@ private class FrameDraft(
 private class KotlinFrameTreeBuilder(
     private val unit: ParsedKotlinUnit,
     private val sourcePath: String,
-    private val sourceText: String,
 ) {
     private val packets: List<SyntaxPacket> = unit.packets
     private val frames = ArrayList<PacketFrame>(64)
@@ -48,7 +59,6 @@ private class KotlinFrameTreeBuilder(
         val rootIdx = materialize(rootDraft, parentFrameIndex = -1)
         return PacketStream(
             sourcePath = sourcePath,
-            sourceText = sourceText,
             packets = packets,
             frames = frames,
             rootFrameIndex = rootIdx,

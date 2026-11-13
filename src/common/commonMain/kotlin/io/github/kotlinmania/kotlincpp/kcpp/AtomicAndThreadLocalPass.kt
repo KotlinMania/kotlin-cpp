@@ -1,6 +1,7 @@
 package io.github.kotlinmania.kotlincpp.kcpp
 
 import io.github.kotlinmania.kotlincpp.packet.KtNodeTypes
+import io.github.kotlinmania.kotlincpp.packet.KtTokens
 import io.github.kotlinmania.kotlincpp.packet.LiteralPacketKind
 import io.github.kotlinmania.kotlincpp.packet.PacketFlags
 import io.github.kotlinmania.kotlincpp.packet.PacketFrame
@@ -96,10 +97,11 @@ internal object AtomicAndThreadLocalPass {
                     threadLocalByName[propSym.kotlinName] = tl
                 }
             } else if (propSym.returnTypeFrameIndex != null) {
-                val retSlice = FrameAstHelpers.frameSourceSlice(stream, stream.frames[propSym.returnTypeFrameIndex]).trim()
-                if (retSlice.startsWith("CommonThreadLocal<") || retSlice.startsWith("ThreadLocal<")) {
+                val retFrame = stream.frames[propSym.returnTypeFrameIndex]
+                val retBase = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, retFrame)
+                if (retBase == "CommonThreadLocal" || retBase == "ThreadLocal") {
                     propFrame.flags = propFrame.flags or PacketFlags.THREAD_LOCAL_SLOT
-                    val typeArg = extractFirstTypeArgFrame(stream, stream.frames[propSym.returnTypeFrameIndex])
+                    val typeArg = extractFirstTypeArgFrame(stream, retFrame)
                     val tl =
                         ThreadLocalSlotInfo(
                             propFrameIndex = propSym.frameIndex,
@@ -218,8 +220,8 @@ internal object AtomicAndThreadLocalPass {
         initExprFrame: PacketFrame?,
     ): Pair<String?, Boolean> {
         if (explicitTypeFrame != null) {
-            val raw = FrameAstHelpers.frameSourceSlice(stream, explicitTypeFrame).trim().removeSuffix("?")
-            val isRef = raw !in setOf("Int", "Long", "Boolean", "UInt", "ULong", "Byte", "Short")
+            val base = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, explicitTypeFrame)
+            val isRef = base == null || base !in setOf("Int", "Long", "Boolean", "UInt", "ULong", "Byte", "Short")
             return null to isRef
         }
         if (initExprFrame == null) return "void*" to true
@@ -283,9 +285,9 @@ internal object AtomicAndThreadLocalPass {
             val children = FrameAstHelpers.childFrames(stream, frame)
             if (children.size >= 3) {
                 val lhs = children[0]
-                val op = FrameAstHelpers.frameSourceSlice(stream, children[1]).trim()
+                val opId = FrameAstHelpers.operationTokenId(stream, children[1])
                 val rhs = children[2]
-                if (op == "=" && lhs.nodeTypeId == KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID) {
+                if (opId == KtTokens.EQ_ID && lhs.nodeTypeId == KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID) {
                     val dotChildren = FrameAstHelpers.childFrames(stream, lhs)
                     if (dotChildren.size == 2 && dotChildren[1].nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
                         val propName = FrameAstHelpers.directIdentPacket(stream, dotChildren[1])?.unescapedName

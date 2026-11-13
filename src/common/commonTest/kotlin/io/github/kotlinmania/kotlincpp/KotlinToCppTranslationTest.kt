@@ -588,4 +588,163 @@ class KotlinToCppTranslationTest {
         assertTrue(startHpp.contains("return (self == CoroutineStart::LAZY);"))
         assertTrue(startHpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]"))
     }
+
+    @Test
+    fun translatesCodeInKdocAndLineCommentsWithoutSyntheticDocBlocks() {
+        val ktSource =
+            """
+            // port-lint: source kotlinx-coroutines-core/common/src/Yield.kt
+            package kotlinx.coroutines
+
+            /**
+             * Suspends and performs [check for cancellation][ensureActive] via [CoroutineDispatcher.isDispatchNeeded].
+             *
+             * ```
+             * fun updateProgressBar(stepCount: Int) {
+             *     println(stepCount)
+             * }
+             * val maxRetries = 3
+             * repeat(maxRetries) {
+             *     updateProgressBar(it)
+             * }
+             * coroutineScope {
+             *     delay(10L)
+             * }
+             * ```
+             *
+             * When `currentValue == null` or `withContext(NonCancellable) { ... }`, see [Job.join] and [Unit].
+             * @param timeMillis delay duration
+             */
+            public fun ensureActive(timeMillis: Long): Unit {
+                // Fast check when `timeMillis` exceeds `Long.MAX_VALUE`
+                if (timeMillis <= 0L) return
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(ktSource, sourcePath = "Yield.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact!!.content
+
+        // 1. Zero synthetic `/** Transliterated from: ... */` or `@file` doc blocks
+        assertFalse(hpp.contains("/** Transliterated from:"))
+        assertFalse(cpp.contains("/** Transliterated from:"))
+        assertFalse(hpp.contains("@file"))
+
+        // 2. Fenced Kotlin code block inside KDoc is translated to C++23 (` ```cpp `)
+        assertTrue(hpp.contains("```cpp"))
+        assertTrue(hpp.contains("auto update_progress_bar = [&](std::int32_t step_count) -> void"))
+        assertTrue(hpp.contains("const auto max_retries = 3;"))
+        assertTrue(hpp.contains("update_progress_bar("))
+        assertFalse(hpp.contains("fun updateProgressBar"))
+        assertFalse(hpp.contains("val maxRetries"))
+
+        // 3. KDoc links, @param tags, and inline code spans in KDoc & // comments are translated
+        assertTrue(hpp.contains("\\ref ensure_active \"check for cancellation\""))
+        assertTrue(hpp.contains("\\ref CoroutineDispatcher::is_dispatch_needed"))
+        assertTrue(hpp.contains("`current_value == nullptr`"))
+        assertTrue(hpp.contains("`with_context(NonCancellable) { ... }`"))
+        assertTrue(hpp.contains("coroutine_scope("))
+        assertFalse(hpp.contains("kxs_implicit_continuation"))
+        assertTrue(hpp.contains("\\ref Job::join"))
+        assertTrue(hpp.contains("\\c void"))
+        assertTrue(hpp.contains("@param time_millis delay duration"))
+        assertTrue(cpp.contains("`time_millis`"))
+        assertTrue(cpp.contains("`Long::MAX_VALUE`"))
+    }
+
+    @Test
+    fun lowersInnerClassesAndCollectionExtensionReceivers() {
+        val ktSource =
+            """
+            package kotlinx.coroutines
+
+            import kotlinx.atomicfu.atomic
+
+            public suspend fun <T> Collection<Deferred<T>>.awaitAll(): List<T> =
+                if (isEmpty()) emptyList() else AwaitAll(toTypedArray()).await()
+
+            public suspend fun Collection<Job>.joinAll(): Unit = forEach { it.join() }
+
+            private class AwaitAll<T>(private val deferreds: Array<out Deferred<T>>) {
+                private val notCompletedCount = atomic(deferreds.size)
+
+                fun notifyDone() {}
+
+                fun createNode(): AwaitAllNode = AwaitAllNode(0)
+
+                private inner class DisposeHandlersOnCancel(private val nodes: Array<AwaitAllNode>) {
+                    fun disposeAll() {
+                        this@AwaitAll.notifyDone()
+                    }
+                }
+
+                private inner class AwaitAllNode(val index: Int) {
+                    fun step(): Int {
+                        notifyDone()
+                        return notCompletedCount.decrementAndGet() + deferreds.size
+                    }
+                }
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(ktSource, sourcePath = "Await.kt")
+        val hpp = res.headerArtifact.content
+
+        // 1. `Collection<E>` extension receiver alias and signature preservation for `ast_distance`
+        assertTrue(hpp.contains("template <typename E>\nusing Collection = std::vector<E>;"))
+        assertTrue(hpp.contains("const Collection<std::shared_ptr<Deferred<T>>>& self"))
+        assertTrue(hpp.contains("const Collection<std::shared_ptr<Job>>& self"))
+        assertTrue(hpp.contains("self.empty()"))
+        assertTrue(hpp.contains("AwaitAll(self)"))
+        assertTrue(hpp.contains("for (auto&& it : self)"))
+
+        // 2. Sibling forward declaration + `inner class` outer pointer lowering
+        assertTrue(hpp.contains("class AwaitAllNode;\n"))
+        assertTrue(hpp.contains("AwaitAll* outer_;"))
+        assertTrue(hpp.contains("DisposeHandlersOnCancel(AwaitAll* outer_value, std::vector<AwaitAllNode> nodes_value)"))
+        assertTrue(hpp.contains("AwaitAllNode(AwaitAll* outer_value, std::int32_t index_value)"))
+        assertTrue(hpp.contains(": outer_(outer_value), nodes_(std::move(nodes_value))"))
+        assertTrue(hpp.contains("AwaitAllNode(this, 0)"))
+        assertTrue(hpp.contains("outer_->notify_done()"))
+        assertTrue(hpp.contains("outer_->not_completed_count_.fetch_sub(1, std::memory_order_seq_cst) - 1"))
+        assertTrue(hpp.contains("outer_->deferreds_.size()"))
+    }
+
+    @Test
+    fun translatesKdocInterpolatedClassFenceAnnotatedReturnAndStandaloneElvisBreak() {
+        val ktSource =
+            """
+            package kotlinx.coroutines
+
+            /**
+             * Example of the implementation:
+             *
+             * ```
+             * class CountingListFlow(private val values: List<Int>) {
+             *     fun toDiagnosticString(): String = "Flow was collected ${"$"}{values.size} times"
+             * }
+             * ```
+             */
+            public class EventQueue<T> {
+                public fun drainReady(state: Any?): T {
+                    while (true) {
+                        pollNext() ?: break
+                    }
+                    @Suppress("UNCHECKED_CAST")
+                    return state as T
+                }
+
+                private fun pollNext(): Any? = null
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(ktSource, sourcePath = "EventQueue.kt")
+        val hpp = res.headerArtifact.content
+
+        assertTrue(hpp.contains("```cpp"))
+        assertTrue(hpp.contains("class CountingListFlow"))
+        assertTrue(hpp.contains("if (!(poll_next())) {"))
+        assertTrue(hpp.contains("break;"))
+        assertTrue(hpp.contains("return static_cast<T>(state);"))
+    }
 }

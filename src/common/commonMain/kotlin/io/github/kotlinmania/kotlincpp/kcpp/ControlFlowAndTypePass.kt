@@ -48,8 +48,10 @@ internal object ControlFlowAndTypePass {
         val nothingFunNames = LinkedHashSet<String>(BUILTIN_DIVERGING_CALLS)
         for (fn in symbols.functionsByFrame.values) {
             val retIdx = fn.returnTypeFrameIndex ?: continue
-            val retSlice = FrameAstHelpers.frameSourceSlice(stream, stream.frames[retIdx]).trim()
-            if (retSlice == "Nothing") {
+            val retFrame = stream.frames[retIdx]
+            if (FrameAstHelpers.extractPrimaryTypeSimpleName(stream, retFrame) == "Nothing" &&
+                !FrameAstHelpers.isNullableTypeFrame(stream, retFrame)
+            ) {
                 nothingFunNames.add(fn.kotlinName)
             }
         }
@@ -293,15 +295,16 @@ internal object ControlFlowAndTypePass {
             KtNodeTypes.BINARY_EXPRESSION_ID -> {
                 val children = FrameAstHelpers.childFrames(stream, frame)
                 if (children.size >= 3) {
-                    val op = FrameAstHelpers.frameSourceSlice(stream, children[1]).trim()
-                    if (op == "?:" && children[0].nodeTypeId != KtNodeTypes.REFERENCE_EXPRESSION_ID) {
+                    val opId = FrameAstHelpers.operationTokenId(stream, children[1])
+                    if (opId == KtTokens.ELVIS_ID && children[0].nodeTypeId != KtNodeTypes.REFERENCE_EXPRESSION_ID) {
                         frame.flags = frame.flags or PacketFlags.SINGLE_EVAL_SUBJECT_REQUIRED
                         ctx.singleEvalTemps[frame.frameIndex] = "kxs_elvis${ctx.nextTempIndex()}"
                     }
-                    val rhsValPos = inValuePosition || op in ASSIGN_OPERATORS || op == "?:"
+                    val isAssign = opId in ASSIGN_OPERATOR_IDS
+                    val rhsValPos = inValuePosition || isAssign || opId == KtTokens.ELVIS_ID
                     walkFrame(
                         frame = children[0],
-                        inValuePosition = op !in ASSIGN_OPERATORS,
+                        inValuePosition = !isAssign,
                         enclosingStmtFrameIndex = enclosingStmtFrameIndex,
                         ctx = ctx,
                     )
@@ -324,7 +327,12 @@ internal object ControlFlowAndTypePass {
             KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID -> {
                 val parts = FrameAstHelpers.childFrames(stream, frame)
                 if (parts.size == 2) {
-                    val recvText = FrameAstHelpers.frameSourceSlice(stream, parts[0]).trim()
+                    val recvName =
+                        if (parts[0].nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
+                            FrameAstHelpers.directIdentPacket(stream, parts[0])?.unescapedName
+                        } else {
+                            null
+                        }
                     val selCall =
                         if (parts[1].nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
                             FrameAstHelpers
@@ -333,7 +341,7 @@ internal object ControlFlowAndTypePass {
                         } else {
                             FrameAstHelpers.directIdentPacket(stream, parts[1])?.unescapedName
                         }
-                    if (recvText == "Result" || selCall in RESULT_API_METHODS) {
+                    if (recvName == "Result" || selCall in RESULT_API_METHODS) {
                         frame.flags = frame.flags or PacketFlags.KOTLIN_RESULT_CHANNEL
                     }
                 }
@@ -387,8 +395,7 @@ internal object ControlFlowAndTypePass {
             val lhs = children.firstOrNull()
             val tr = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.TYPE_REFERENCE_ID)
             val opRef = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.OPERATION_REFERENCE_ID)
-            val opSlice = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() }.orEmpty()
-            val isNeg = opSlice == "!is"
+            val isNeg = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.NOT_IS_ID
             if (lhs != null && lhs.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID && tr != null) {
                 val varName = FrameAstHelpers.directIdentPacket(stream, lhs)?.unescapedName ?: return
                 expr.flags = expr.flags or PacketFlags.SMART_CAST_SUBTYPE
@@ -410,7 +417,7 @@ internal object ControlFlowAndTypePass {
         } else if (expr.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
             val children = FrameAstHelpers.childFrames(stream, expr)
             if (children.size >= 3) {
-                val op = FrameAstHelpers.frameSourceSlice(stream, children[1]).trim()
+                val opId = FrameAstHelpers.operationTokenId(stream, children[1])
                 val lhsIsNull = children[0].nodeTypeId == KtNodeTypes.NULL_ID
                 val rhsIsNull = children[2].nodeTypeId == KtNodeTypes.NULL_ID
                 val varSide =
@@ -421,9 +428,12 @@ internal object ControlFlowAndTypePass {
                     } else {
                         null
                     }
-                if (varSide != null && varSide.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID && (op == "!=" || op == "==")) {
+                if (varSide != null &&
+                    varSide.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID &&
+                    (opId == KtTokens.EXCLEQ_ID || opId == KtTokens.EQEQ_ID)
+                ) {
                     expr.flags = expr.flags or PacketFlags.SMART_CAST_NON_NULL
-                    val targetBranch = if (op == "!=") thenWrap else elseWrap
+                    val targetBranch = if (opId == KtTokens.EXCLEQ_ID) thenWrap else elseWrap
                     if (targetBranch != null) {
                         targetBranch.flags = targetBranch.flags or PacketFlags.SMART_CAST_NON_NULL
                     }
@@ -432,8 +442,15 @@ internal object ControlFlowAndTypePass {
         }
     }
 
-    private val ASSIGN_OPERATORS: Set<String> =
-        setOf("=", "+=", "-=", "*=", "/=", "%=")
+    private val ASSIGN_OPERATOR_IDS: Set<Int> =
+        setOf(
+            KtTokens.EQ_ID,
+            KtTokens.PLUSEQ_ID,
+            KtTokens.MINUSEQ_ID,
+            KtTokens.MULTEQ_ID,
+            KtTokens.DIVEQ_ID,
+            KtTokens.PERCEQ_ID,
+        )
 
     private val BUILTIN_DIVERGING_CALLS: Set<String> =
         setOf("error", "TODO")

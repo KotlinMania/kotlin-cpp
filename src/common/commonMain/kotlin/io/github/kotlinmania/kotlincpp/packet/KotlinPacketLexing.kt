@@ -85,7 +85,204 @@ internal object KotlinPacketLexing {
             }
         val sourceTokens = allTokens.subList(0, nonEofCount)
 
-        val marks = preScanParseTree(fileCtx, nonEofCount, sourcePath)
+        val marks = preScanParseTree(fileCtx, nonEofCount, sourcePath, throwOnError = true)!!
+        return buildParsedUnitFromTokens(source, sourcePath, fileCtx, sourceTokens, nonEofCount, marks)
+    }
+
+    fun lexAndParseOrNull(source: String, sourcePath: String): ParsedKotlinUnit? {
+        var syntaxErrors = 0
+        val errorListener =
+            object : BaseErrorListener() {
+                override fun syntaxError(
+                    recognizer: Recognizer<*, *>?,
+                    offendingSymbol: Any?,
+                    line: Int,
+                    charPositionInLine: Int,
+                    msg: String?,
+                    e: RecognitionException?,
+                ) {
+                    syntaxErrors += 1
+                }
+            }
+
+        val charStream = CharStreams.fromString(source, sourcePath)
+        val lexer = KotlinLexer(charStream)
+        lexer.removeErrorListeners()
+        lexer.addErrorListener(errorListener)
+
+        val tokenStream = CommonTokenStream(lexer)
+        tokenStream.fill()
+        if (syntaxErrors > 0) return null
+
+        val parser = KotlinParser(tokenStream)
+        parser.removeErrorListeners()
+        parser.addErrorListener(errorListener)
+        val fileCtx = parser.kotlinFile()
+        if (syntaxErrors > 0) return null
+
+        val allTokens = tokenStream.allTokens()
+        val nonEofCount =
+            if (allTokens.isNotEmpty() && allTokens.last().type == Token.EOF) {
+                allTokens.size - 1
+            } else {
+                allTokens.size
+            }
+        val sourceTokens = allTokens.subList(0, nonEofCount)
+        if (sourceTokens.any {
+                it.type == KotlinLexer.Tokens.ErrorCharacter ||
+                    it.type == KotlinLexer.Tokens.RESERVED ||
+                    it.type == KotlinLexer.Tokens.SINGLE_QUOTE
+            }
+        ) {
+            return null
+        }
+
+        val marks = preScanParseTree(fileCtx, nonEofCount, sourcePath, throwOnError = false) ?: return null
+        return buildParsedUnitFromTokens(source, sourcePath, fileCtx, sourceTokens, nonEofCount, marks)
+    }
+
+    fun lexSnippetPacketsOrNull(source: String, sourcePath: String = "<doc>"): List<SyntaxPacket>? {
+        if (source.contains("// port-lint: ignore")) return null
+        var lexErrors = 0
+        val errorListener =
+            object : BaseErrorListener() {
+                override fun syntaxError(
+                    recognizer: Recognizer<*, *>?,
+                    offendingSymbol: Any?,
+                    line: Int,
+                    charPositionInLine: Int,
+                    msg: String?,
+                    e: RecognitionException?,
+                ) {
+                    lexErrors += 1
+                }
+            }
+        val charStream = CharStreams.fromString(source, sourcePath)
+        val lexer = KotlinLexer(charStream)
+        lexer.removeErrorListeners()
+        lexer.addErrorListener(errorListener)
+
+        val tokenStream = CommonTokenStream(lexer)
+        tokenStream.fill()
+        if (lexErrors > 0) return null
+
+        val allTokens = tokenStream.allTokens()
+        val nonEofCount =
+            if (allTokens.isNotEmpty() && allTokens.last().type == Token.EOF) {
+                allTokens.size - 1
+            } else {
+                allTokens.size
+            }
+        val sourceTokens = allTokens.subList(0, nonEofCount)
+        if (sourceTokens.any {
+                it.type == KotlinLexer.Tokens.ErrorCharacter ||
+                    it.type == KotlinLexer.Tokens.SINGLE_QUOTE
+            }
+        ) {
+            return null
+        }
+
+        val emptyMarks =
+            PreScanMarks(
+                identifierTokens = BooleanArray(nonEofCount),
+                angleBracketDelims = BooleanArray(nonEofCount),
+                funModifierTokens = BooleanArray(nonEofCount),
+                stringExprClosingBraces = computeSnippetStringExprClosingBraces(sourceTokens),
+                pairedSecondOperatorId = IntArray(nonEofCount),
+            )
+        val offsetTable = SourceOffsetTable(source)
+        val rawItems = ArrayList<RawPacketItem>(nonEofCount + 8)
+        val rawCoreFirst = IntArray(nonEofCount) { -1 }
+        val rawCoreLast = IntArray(nonEofCount) { -1 }
+
+        var utf16Cursor = 0
+        for (tokIdx in 0 until nonEofCount) {
+            val tok = sourceTokens[tokIdx]
+            val text = tok.text.orEmpty()
+            emitSingleAntlrToken(
+                tok = tok,
+                tokIdx = tokIdx,
+                tokStartUtf16 = utf16Cursor,
+                sourcePath = sourcePath,
+                marks = emptyMarks,
+                rawItems = rawItems,
+                rawCoreFirst = rawCoreFirst,
+                rawCoreLast = rawCoreLast,
+                allowSnippetEllipsis = true,
+            )
+            utf16Cursor += text.length
+        }
+        if (utf16Cursor != source.length) return null
+
+        val packets = ArrayList<SyntaxPacket>(rawItems.size)
+        var rIdx = 0
+        while (rIdx < rawItems.size) {
+            when (val item = rawItems[rIdx]) {
+                is RawPacketItem.Whitespace -> {
+                    val wsStart = item.startOffset
+                    var wsEnd = item.endOffset
+                    val sb = StringBuilder(item.rawText)
+                    rIdx += 1
+                    while (rIdx < rawItems.size && rawItems[rIdx] is RawPacketItem.Whitespace) {
+                        val nextWs = rawItems[rIdx] as RawPacketItem.Whitespace
+                        sb.append(nextWs.rawText)
+                        wsEnd = nextWs.endOffset
+                        rIdx += 1
+                    }
+                    val finalIdx = packets.size
+                    packets.add(buildWhitespacePacket(finalIdx, offsetTable.spanOf(wsStart, wsEnd), sb.toString()))
+                }
+                is RawPacketItem.Concrete -> {
+                    val finalIdx = packets.size
+                    packets.add(item.factory(finalIdx, offsetTable.spanOf(item.startOffset, item.endOffset)))
+                    rIdx += 1
+                }
+            }
+        }
+        pairBalancedDelimiters(packets)
+        UniversalSynTokenAssociation.attachAll(packets)
+        return packets
+    }
+
+    private fun computeSnippetStringExprClosingBraces(sourceTokens: List<Token>): BooleanArray {
+        val closing = BooleanArray(sourceTokens.size)
+        val braceDepthStack = ArrayList<Int>()
+        for ((idx, tok) in sourceTokens.withIndex()) {
+            when (tok.type) {
+                KotlinLexer.Tokens.LineStrExprStart,
+                KotlinLexer.Tokens.MultiLineStrExprStart,
+                -> braceDepthStack.add(0)
+
+                KotlinLexer.Tokens.LCURL -> {
+                    if (braceDepthStack.isNotEmpty()) {
+                        braceDepthStack[braceDepthStack.lastIndex] = braceDepthStack.last() + 1
+                    }
+                }
+
+                KotlinLexer.Tokens.RCURL -> {
+                    if (braceDepthStack.isNotEmpty()) {
+                        val innerDepth = braceDepthStack.last()
+                        if (innerDepth == 0) {
+                            braceDepthStack.removeAt(braceDepthStack.lastIndex)
+                            closing[idx] = true
+                        } else {
+                            braceDepthStack[braceDepthStack.lastIndex] = innerDepth - 1
+                        }
+                    }
+                }
+            }
+        }
+        return closing
+    }
+
+    private fun buildParsedUnitFromTokens(
+        source: String,
+        sourcePath: String,
+        fileCtx: KotlinParser.KotlinFileContext,
+        sourceTokens: List<Token>,
+        nonEofCount: Int,
+        marks: PreScanMarks,
+    ): ParsedKotlinUnit {
         val offsetTable = SourceOffsetTable(source)
         val rawItems = ArrayList<RawPacketItem>(nonEofCount + 16)
         val rawCoreFirst = IntArray(nonEofCount) { -1 }
@@ -211,12 +408,14 @@ internal object KotlinPacketLexing {
         root: ParserRuleContext,
         tokenCount: Int,
         sourcePath: String,
-    ): PreScanMarks {
+        throwOnError: Boolean,
+    ): PreScanMarks? {
         val identifierTokens = BooleanArray(tokenCount)
         val angleBracketDelims = BooleanArray(tokenCount)
         val funModifierTokens = BooleanArray(tokenCount)
         val stringExprClosingBraces = BooleanArray(tokenCount)
         val pairedSecondOperatorId = IntArray(tokenCount)
+        var hasParseError = false
 
         fun markToken(node: TerminalNode?, target: BooleanArray) {
             val idx = node?.symbol?.tokenIndex ?: return
@@ -226,10 +425,15 @@ internal object KotlinPacketLexing {
         }
 
         fun visit(ctx: ParserRuleContext) {
+            if (hasParseError) return
             if (ctx.exception != null) {
-                val line = ctx.start?.line ?: 1
-                val col = (ctx.start?.charPositionInLine ?: 0) + 1
-                throw IllegalArgumentException("$sourcePath:$line:$col: Kotlin parse error in rule ${ctx.ruleIndex}")
+                if (throwOnError) {
+                    val line = ctx.start?.line ?: 1
+                    val col = (ctx.start?.charPositionInLine ?: 0) + 1
+                    throw IllegalArgumentException("$sourcePath:$line:$col: Kotlin parse error in rule ${ctx.ruleIndex}")
+                }
+                hasParseError = true
+                return
             }
             when (ctx) {
                 is KotlinParser.SimpleIdentifierContext -> {
@@ -302,12 +506,16 @@ internal object KotlinPacketLexing {
             for (child in children) {
                 when (child) {
                     is ErrorNode -> {
-                        val sym = child.symbol
-                        val line = sym?.line ?: 1
-                        val col = (sym?.charPositionInLine ?: 0) + 1
-                        throw IllegalArgumentException(
-                            "$sourcePath:$line:$col: unexpected token '${sym?.text.orEmpty()}'",
-                        )
+                        if (throwOnError) {
+                            val sym = child.symbol
+                            val line = sym?.line ?: 1
+                            val col = (sym?.charPositionInLine ?: 0) + 1
+                            throw IllegalArgumentException(
+                                "$sourcePath:$line:$col: unexpected token '${sym?.text.orEmpty()}'",
+                            )
+                        }
+                        hasParseError = true
+                        return
                     }
                     is ParserRuleContext -> visit(child)
                 }
@@ -315,6 +523,7 @@ internal object KotlinPacketLexing {
         }
 
         visit(root)
+        if (hasParseError) return null
         return PreScanMarks(
             identifierTokens = identifierTokens,
             angleBracketDelims = angleBracketDelims,
@@ -333,10 +542,21 @@ internal object KotlinPacketLexing {
         rawItems: MutableList<RawPacketItem>,
         rawCoreFirst: IntArray,
         rawCoreLast: IntArray,
+        allowSnippetEllipsis: Boolean = false,
     ) {
         val text = tok.text.orEmpty()
         val tokEndUtf16 = tokStartUtf16 + text.length
         val type = tok.type
+
+        if (allowSnippetEllipsis && type == KotlinLexer.Tokens.RESERVED) {
+            val rawIdx =
+                addConcrete(rawItems, tokStartUtf16, tokEndUtf16, text) { idx, span ->
+                    SyntaxPacket.DelimiterPacket(idx, span, text, KtTokens.RESERVED_DOTS_ID)
+                }
+            rawCoreFirst[tokIdx] = rawIdx
+            rawCoreLast[tokIdx] = rawIdx
+            return
+        }
 
         if (type == KotlinLexer.Tokens.ErrorCharacter ||
             type == KotlinLexer.Tokens.RESERVED ||

@@ -11,8 +11,44 @@ import io.github.kotlinmania.libc.unix.bsd.O_WRONLY
 import io.github.kotlinmania.libc.unix.bsd.apple.F_OK
 import io.github.kotlinmania.libc.unix.bsd.apple.R_OK
 import io.github.kotlinmania.libc.unix.bsd.apple.W_OK
+import io.github.kotlinmania.libc.unix.free
 import io.github.kotlinmania.libc.unix.realpath
+import io.github.kotlinmania.rustlang.alloc.ffi.CString
+import io.github.kotlinmania.rustlang.core.ffi.CStr
+import io.github.kotlinmania.rustlang.core.ptr.ConstPtr
+import io.github.kotlinmania.rustlang.core.ptr.MutPtr
 import io.github.kotlinmania.io.files.Path as KmPath
+
+private inline fun <R> withJvmPosixCString(
+    text: String,
+    block: (ConstPtr) -> R,
+): R {
+    val cstr = CString.new(text).unwrap()
+    return try {
+        block(cstr.asPtr())
+    } finally {
+        cstr.deallocate()
+    }
+}
+
+private fun jvmPosixAccess(path: String, mode: Int): Int =
+    withJvmPosixCString(path) { pathPtr ->
+        access(pathPtr, mode)
+    }
+
+private fun jvmPosixRealpath(path: String): String? =
+    withJvmPosixCString(path) { pathPtr ->
+        val raw = realpath(pathPtr, MutPtr(0L))
+        if (raw.isNull()) {
+            null
+        } else {
+            try {
+                CStr.fromPtr(raw.castConst()).toStringLossy()
+            } finally {
+                free(raw)
+            }
+        }
+    }
 
 internal fun probeTargetKotlinFileJvmPosix(path: String): TargetKotlinFileDetails {
     val normalizedPath = path.replace('\\', '/')
@@ -21,24 +57,24 @@ internal fun probeTargetKotlinFileJvmPosix(path: String): TargetKotlinFileDetail
     val kmMetadata = SystemFileSystem.metadataOrNull(kmPath)
     val kmExists = SystemFileSystem.exists(kmPath)
 
-    val posixFOk = access(path, F_OK) == 0
-    val posixROk = access(path, R_OK) == 0
-    val posixWOk = access(path, W_OK) == 0
+    val posixFOk = jvmPosixAccess(path, F_OK) == 0
+    val posixROk = jvmPosixAccess(path, R_OK) == 0
+    val posixWOk = jvmPosixAccess(path, W_OK) == 0
 
     val exists = kmExists || posixFOk
-    val resolvedRealPath = if (exists) realpath(path, null) else null
+    val resolvedRealPath = if (exists) jvmPosixRealpath(path) else null
 
     val isSymbolicLink =
         if (!exists) {
             false
         } else {
-            val parentReal = kmPath.parent?.let { realpath(it.toString(), null) }
+            val parentReal = kmPath.parent?.let { jvmPosixRealpath(it.toString()) }
             val expectedRealInParent = if (parentReal != null) "${parentReal.trimEnd('/')}/$fileName" else null
             resolvedRealPath != null &&
                 expectedRealInParent != null &&
                 resolvedRealPath != expectedRealInParent &&
                 !isCaseInsensitiveCanonicalMatch(parentReal, fileName, resolvedRealPath) { candidate ->
-                    realpath(candidate, null)
+                    jvmPosixRealpath(candidate)
                 }
         }
 
@@ -48,7 +84,7 @@ internal fun probeTargetKotlinFileJvmPosix(path: String): TargetKotlinFileDetail
     val isWritable =
         if (!exists) {
             val parentPath = kmPath.parent?.toString()
-            if (parentPath != null) access(parentPath, W_OK) == 0 else true
+            if (parentPath != null) jvmPosixAccess(parentPath, W_OK) == 0 else true
         } else {
             posixWOk
         }

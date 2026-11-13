@@ -296,18 +296,18 @@ internal object SuspendStateMachinePass {
                     val lhs = children[0]
                     val opRef = children[1]
                     val rhs = children[2]
-                    val opTokenText = FrameAstHelpers.frameSourceSlice(stream, opRef).trim()
-                    val isInfixSuspend = opTokenText in ctx.sameFileSuspendFuns
+                    val opId = FrameAstHelpers.operationTokenId(stream, opRef)
+                    val opSymbol = FrameAstHelpers.operationSymbolName(stream, opRef)
+                    val isInfixSuspend = opId == KtTokens.IDENTIFIER_ID && opSymbol in ctx.sameFileSuspendFuns
                     val lhsHas = analyzeSubtree(lhs, enclosingStmtFrameIndex, ctx)
                     val rhsHas = analyzeSubtree(rhs, enclosingStmtFrameIndex, ctx)
 
-                    val isShortCircuitOrAssign =
-                        opTokenText in SHORT_CIRCUIT_AND_ASSIGN_OPS
+                    val isShortCircuitOrAssign = opId in SHORT_CIRCUIT_AND_ASSIGN_OP_IDS
                     if (!isShortCircuitOrAssign && rhsHas && isHoistableExpression(stream, lhs)) {
                         hoistExpression(lhs, frame.frameIndex, enclosingStmtFrameIndex, ctx)
                     }
                     if (isInfixSuspend) {
-                        validateSuspendCallLegality(frame, opTokenText, hasExplicitAllowedReceiver = false, ctx = ctx)
+                        validateSuspendCallLegality(frame, opSymbol, hasExplicitAllowedReceiver = false, ctx = ctx)
                         frame.flags = frame.flags or PacketFlags.SUSPEND_CALL_SITE or PacketFlags.HAS_SUSPEND_IN_SUBTREE
                         ctx.suspendCallFrames.add(frame.frameIndex)
                         return true
@@ -715,9 +715,12 @@ internal object SuspendStateMachinePass {
             } else {
                 trailingLambda
             }
-        val retTypeSlice =
-            fnSym.returnTypeFrameIndex?.let { FrameAstHelpers.frameSourceSlice(stream, stream.frames[it]).trim() }
-        val isUnitReturn = retTypeSlice == null || retTypeSlice == "Unit"
+        val isUnitReturn =
+            fnSym.returnTypeFrameIndex == null ||
+                stream.frames[fnSym.returnTypeFrameIndex].let { rf ->
+                    FrameAstHelpers.extractPrimaryTypeSimpleName(stream, rf) == "Unit" &&
+                        !FrameAstHelpers.isNullableTypeFrame(stream, rf)
+                }
         return LeafContinuationIntrinsic(
             funFrameIndex = fnSym.frameIndex,
             uContParamKotlinName = uContKotlinName,
@@ -853,9 +856,7 @@ internal object SuspendStateMachinePass {
     private fun isThisReceiver(
         stream: PacketStream,
         exprFrame: PacketFrame,
-    ): Boolean =
-        exprFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID ||
-            FrameAstHelpers.frameSourceSlice(stream, exprFrame).trim() == "this"
+    ): Boolean = exprFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID
 
     private fun extractValueArgumentExpr(
         stream: PacketStream,
@@ -893,7 +894,7 @@ internal object SuspendStateMachinePass {
         if (root.nodeTypeId == KtNodeTypes.RETURN_ID) {
             val labelQual = FrameAstHelpers.firstChildFrame(stream, root, KtNodeTypes.LABEL_QUALIFIER_ID)
             if (labelQual == null) return true
-            val labelText = FrameAstHelpers.frameSourceSlice(stream, labelQual).removePrefix("@").trim()
+            val labelText = FrameAstHelpers.directIdentPacket(stream, labelQual)?.unescapedName.orEmpty()
             return labelText != inlineCalleeName
         }
         for (child in FrameAstHelpers.childFrames(stream, root)) {
@@ -904,8 +905,18 @@ internal object SuspendStateMachinePass {
         return false
     }
 
-    private val SHORT_CIRCUIT_AND_ASSIGN_OPS: Set<String> =
-        setOf("&&", "||", "?:", "=", "+=", "-=", "*=", "/=", "%=")
+    private val SHORT_CIRCUIT_AND_ASSIGN_OP_IDS: Set<Int> =
+        setOf(
+            KtTokens.ANDAND_ID,
+            KtTokens.OROR_ID,
+            KtTokens.ELVIS_ID,
+            KtTokens.EQ_ID,
+            KtTokens.PLUSEQ_ID,
+            KtTokens.MINUSEQ_ID,
+            KtTokens.MULTEQ_ID,
+            KtTokens.DIVEQ_ID,
+            KtTokens.PERCEQ_ID,
+        )
 
     private val BUILTIN_INLINE_HOFS: Map<String, BuiltinInlineKind> =
         mapOf(

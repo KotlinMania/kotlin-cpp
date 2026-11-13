@@ -1,6 +1,7 @@
 package io.github.kotlinmania.kotlincpp.kcpp
 
 import io.github.kotlinmania.kotlincpp.packet.KtNodeTypes
+import io.github.kotlinmania.kotlincpp.packet.KtTokens
 import io.github.kotlinmania.kotlincpp.packet.PacketFlags
 import io.github.kotlinmania.kotlincpp.packet.PacketFrame
 import io.github.kotlinmania.kotlincpp.packet.PacketStream
@@ -55,8 +56,10 @@ internal object GcAndOwnershipPass {
             // Stamp parameter ownership flags (`BORROWED_REF` vs `SHARED_OWNER`).
             for (vp in fnSym.valueParams) {
                 val vpFrame = stream.frames[vp.frameIndex]
-                val typeText = vp.typeFrameIndex?.let { FrameAstHelpers.frameSourceSlice(stream, stream.frames[it]).trim() }.orEmpty()
-                val baseType = typeText.substringBefore('<').removeSuffix("?").trim()
+                val baseType =
+                    vp.typeFrameIndex
+                        ?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it]) }
+                        .orEmpty()
                 if (baseType in CppTypeTranslator.SHARED_HIERARCHY_TYPES) {
                     vpFrame.flags = vpFrame.flags or PacketFlags.SHARED_OWNER
                 } else {
@@ -210,8 +213,10 @@ internal object GcAndOwnershipPass {
             val children = FrameAstHelpers.childFrames(stream, root)
             if (children.size >= 3) {
                 val lhs = children[0]
-                val opText = FrameAstHelpers.frameSourceSlice(stream, children[1]).trim()
-                if (opText == "=" && isHeapFieldLhs(stream, lhs, symbols, enclosingClassFrameIndex)) {
+                val opId = FrameAstHelpers.operationTokenId(stream, children[1])
+                if (opId == KtTokens.EQ_ID &&
+                    isHeapFieldLhs(stream, lhs, symbols, enclosingClassFrameIndex)
+                ) {
                     root.flags = root.flags or PacketFlags.GC_HEAP_WRITE_BARRIER
                     heapWriteBarriers.add(root.frameIndex)
                 }
@@ -358,9 +363,8 @@ internal object GcAndOwnershipPass {
     ): Boolean {
         val (_, typeFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, propFrame)
         if (typeFrame != null) {
-            val raw = FrameAstHelpers.frameSourceSlice(stream, typeFrame).trim().removeSuffix("?")
-            val base = raw.substringBefore('<').trim()
-            return base !in SCALAR_VALUE_TYPES
+            val base = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, typeFrame)
+            return base == null || base !in SCALAR_VALUE_TYPES
         }
         val init = FrameAstHelpers.extractInitializerAfterEquals(stream, propFrame) ?: return false
         return when (init.nodeTypeId) {

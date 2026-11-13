@@ -25,7 +25,7 @@ public fun emitKotlinFromPackets(stream: PacketStream): SingleFileTranslation {
 private class KotlinPacketEmitter(
     private val stream: PacketStream,
 ) {
-    private val out = StringBuilder(stream.sourceText.length + 16)
+    private val out = StringBuilder(stream.packets.sumOf { it.rawText.length } + 16)
     var topLevelDeclarationCount: Int = 0
         private set
 
@@ -206,7 +206,8 @@ private class KotlinPacketEmitter(
         val shouldExpandSingleLineFnBlock =
             parentId == KtNodeTypes.FUN_ID &&
                 frame.span.startLine == frame.span.endLine &&
-                isBracedBlockWithStatements(frame)
+                isBracedBlockWithStatements(frame) &&
+                hasSemicolonStatementSeparator(frame)
 
         if (!shouldExpandSingleLineFnBlock) {
             emitChildrenInOrder(frame, enclosingIndent + 4)
@@ -267,6 +268,15 @@ private class KotlinPacketEmitter(
             if (ref >= 0) return true
             val pkt = stream.packets[-(ref + 1)]
             if (pkt !is SyntaxPacket.WhitespacePacket) return true
+        }
+        return false
+    }
+
+    private fun hasSemicolonStatementSeparator(frame: PacketFrame): Boolean {
+        for (i in 1 until frame.childCount - 1) {
+            if (isLeafDelimiter(frame.childRefAt(i), KtTokens.SEMICOLON_ID)) {
+                return true
+            }
         }
         return false
     }

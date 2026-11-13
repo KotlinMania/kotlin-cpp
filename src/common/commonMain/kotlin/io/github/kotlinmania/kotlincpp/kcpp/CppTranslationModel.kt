@@ -1,6 +1,5 @@
 package io.github.kotlinmania.kotlincpp.kcpp
 
-import io.github.kotlinmania.kotlincpp.packet.CommentPacketKind
 import io.github.kotlinmania.kotlincpp.packet.KtNodeTypes
 import io.github.kotlinmania.kotlincpp.packet.KtTokens
 import io.github.kotlinmania.kotlincpp.packet.PacketFlags
@@ -187,17 +186,92 @@ internal object FrameAstHelpers {
         return hasDirectKeyword(stream, modList, keywordId)
     }
 
-    fun frameSourceSlice(
+    fun renderPacketsText(
         stream: PacketStream,
         frame: PacketFrame,
     ): String {
         if (frame.firstPacketIndex > frame.lastPacketIndex || stream.packets.isEmpty()) {
             return ""
         }
-        val start = stream.packets[frame.firstPacketIndex].span.startOffset
-        val end = stream.packets[frame.lastPacketIndex].span.endOffset
-        return stream.sourceText.substring(start, end)
+        val sb = StringBuilder()
+        for (idx in frame.firstPacketIndex..frame.lastPacketIndex) {
+            sb.append(stream.packets[idx].rawText)
+        }
+        return sb.toString()
     }
+
+    fun operationTokenId(
+        stream: PacketStream,
+        opFrame: PacketFrame,
+    ): Int? {
+        if (opFrame.firstPacketIndex > opFrame.lastPacketIndex || stream.packets.isEmpty()) {
+            return null
+        }
+        for (idx in opFrame.firstPacketIndex..opFrame.lastPacketIndex) {
+            when (val pkt = stream.packets[idx]) {
+                is SyntaxPacket.OperatorPacket -> return pkt.operatorId
+                is SyntaxPacket.KeywordPacket -> return pkt.keywordId
+                is SyntaxPacket.IdentPacket -> return KtTokens.IDENTIFIER_ID
+                is SyntaxPacket.DelimiterPacket -> return pkt.delimiterId
+                else -> Unit
+            }
+        }
+        return null
+    }
+
+    fun operationSymbolName(
+        stream: PacketStream,
+        opFrame: PacketFrame,
+    ): String {
+        if (opFrame.firstPacketIndex > opFrame.lastPacketIndex || stream.packets.isEmpty()) {
+            return ""
+        }
+        for (idx in opFrame.firstPacketIndex..opFrame.lastPacketIndex) {
+            when (val pkt = stream.packets[idx]) {
+                is SyntaxPacket.IdentPacket -> return pkt.unescapedName
+                is SyntaxPacket.OperatorPacket -> return pkt.rawText
+                is SyntaxPacket.KeywordPacket -> return pkt.rawText
+                is SyntaxPacket.DelimiterPacket -> return pkt.rawText
+                else -> Unit
+            }
+        }
+        return ""
+    }
+
+    fun isNullableTypeFrame(
+        stream: PacketStream,
+        typeFrame: PacketFrame,
+    ): Boolean =
+        when (typeFrame.nodeTypeId) {
+            KtNodeTypes.NULLABLE_TYPE_ID -> true
+            KtNodeTypes.TYPE_REFERENCE_ID ->
+                childFrames(stream, typeFrame).any { it.nodeTypeId == KtNodeTypes.NULLABLE_TYPE_ID }
+            else -> false
+        }
+
+    fun extractPrimaryTypeSimpleName(
+        stream: PacketStream,
+        typeFrame: PacketFrame,
+    ): String? =
+        when (typeFrame.nodeTypeId) {
+            KtNodeTypes.TYPE_REFERENCE_ID,
+            KtNodeTypes.NULLABLE_TYPE_ID,
+            KtNodeTypes.TYPE_PROJECTION_ID,
+            -> {
+                val child = childFrames(stream, typeFrame).firstOrNull()
+                if (child != null) extractPrimaryTypeSimpleName(stream, child) else null
+            }
+            KtNodeTypes.USER_TYPE_ID -> {
+                val refExpr = firstChildFrame(stream, typeFrame, KtNodeTypes.REFERENCE_EXPRESSION_ID)
+                if (refExpr != null) {
+                    directIdentPacket(stream, refExpr)?.unescapedName
+                } else {
+                    directIdentPacket(stream, typeFrame)?.unescapedName
+                }
+            }
+            KtNodeTypes.DYNAMIC_TYPE_ID -> "dynamic"
+            else -> null
+        }
 
     fun dottedNameText(
         stream: PacketStream,
@@ -250,7 +324,7 @@ internal object FrameAstHelpers {
             val rawArgs = ArrayList<String>()
             if (argList != null) {
                 for (arg in childFramesOfType(stream, argList, KtNodeTypes.VALUE_ARGUMENT_ID)) {
-                    rawArgs.add(frameSourceSlice(stream, arg).trim())
+                    rawArgs.add(renderPacketsText(stream, arg).trim())
                     val strFrame = findDescendantFrame(stream, arg, KtNodeTypes.STRING_TEMPLATE_ID)
                     if (strFrame != null) {
                         strArgs.add(extractConstantStringText(stream, strFrame))
@@ -274,14 +348,33 @@ internal object FrameAstHelpers {
         stream: PacketStream,
         stringTemplateFrame: PacketFrame,
     ): String {
-        val raw = frameSourceSlice(stream, stringTemplateFrame)
-        if (raw.startsWith("\"\"\"") && raw.endsWith("\"\"\"") && raw.length >= 6) {
-            return raw.substring(3, raw.length - 3).trimIndent()
+        if (stringTemplateFrame.firstPacketIndex > stringTemplateFrame.lastPacketIndex || stream.packets.isEmpty()) {
+            return ""
         }
-        if (raw.startsWith("\"") && raw.endsWith("\"") && raw.length >= 2) {
-            return unescapeSimpleKotlinString(raw.substring(1, raw.length - 1))
+        var isMultiline = PacketFlags.hasFlag(stringTemplateFrame.flags, PacketFlags.RAW_MULTILINE_STRING)
+        val sb = StringBuilder()
+        for (idx in stringTemplateFrame.firstPacketIndex..stringTemplateFrame.lastPacketIndex) {
+            val pkt = stream.packets[idx]
+            if (pkt is SyntaxPacket.StringSegmentPacket) {
+                when (pkt.segmentKind) {
+                    io.github.kotlinmania.kotlincpp.packet.StringSegmentKind.OPEN_QUOTE -> {
+                        if (pkt.rawText == "\"\"\"" || PacketFlags.hasFlag(pkt.flags, PacketFlags.RAW_MULTILINE_STRING)) {
+                            isMultiline = true
+                        }
+                    }
+                    io.github.kotlinmania.kotlincpp.packet.StringSegmentKind.LITERAL_PART -> sb.append(pkt.rawText)
+                    io.github.kotlinmania.kotlincpp.packet.StringSegmentKind.ESCAPE_SEQ ->
+                        sb.append(unescapeSimpleKotlinString(pkt.rawText))
+                    io.github.kotlinmania.kotlincpp.packet.StringSegmentKind.CLOSE_QUOTE -> {
+                        if (isMultiline && pkt.rawText.length > 3 && pkt.rawText.endsWith("\"\"\"")) {
+                            sb.append(pkt.rawText, 0, pkt.rawText.length - 3)
+                        }
+                    }
+                    else -> Unit
+                }
+            }
         }
-        return raw
+        return if (isMultiline) sb.toString().trimIndent() else sb.toString()
     }
 
     private fun unescapeSimpleKotlinString(body: String): String =
@@ -519,30 +612,13 @@ internal object FrameAstHelpers {
     fun formatCommentForCpp(
         comment: SyntaxPacket.CommentPacket,
         indent: String,
+        knownFunctionNames: Set<String> = emptySet(),
+        allowFenceTranslation: Boolean = true,
     ): String =
-        when (comment.kind) {
-            CommentPacketKind.LINE -> indent + comment.rawText.trimEnd()
-            CommentPacketKind.BLOCK,
-            CommentPacketKind.KDOC,
-            -> {
-                val lines = comment.rawText.lines()
-                if (lines.size <= 1) {
-                    indent + comment.rawText.trim()
-                } else {
-                    buildString {
-                        append(indent).append(lines[0].trim())
-                        for (idx in 1 until lines.size) {
-                            append('\n').append(indent)
-                            val trimmed = lines[idx].trimStart()
-                            if (trimmed.startsWith("*")) {
-                                append(' ').append(trimmed)
-                            } else {
-                                append(trimmed)
-                            }
-                        }
-                    }
-                }
-            }
-            CommentPacketKind.SHEBANG -> ""
-        }
+        CppComments.formatCommentForCpp(
+            comment = comment,
+            indent = indent,
+            knownFunctionNames = knownFunctionNames,
+            allowFenceTranslation = allowFenceTranslation,
+        )
 }

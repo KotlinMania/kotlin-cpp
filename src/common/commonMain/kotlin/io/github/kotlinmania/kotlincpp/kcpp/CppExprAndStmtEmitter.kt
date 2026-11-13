@@ -21,6 +21,8 @@ internal class LoweringBundle(
     val cfPlan: ControlFlowAndTypePlan,
     val includes: CppIncludeCollector,
     val typeTranslator: CppTypeTranslator,
+    val knownFunctionNames: Set<String> = emptySet(),
+    val isDocExample: Boolean = false,
 )
 
 /**
@@ -126,7 +128,13 @@ internal class CppExprAndStmtEmitter(
                     if (ref < 0) {
                         val pkt = stream.packets[-(ref + 1)]
                         if (pkt is SyntaxPacket.CommentPacket && pkt.portLintDirectiveKind == null) {
-                            val formatted = FrameAstHelpers.formatCommentForCpp(pkt, innerIndent)
+                            val formatted =
+                                FrameAstHelpers.formatCommentForCpp(
+                                    comment = pkt,
+                                    indent = innerIndent,
+                                    knownFunctionNames = bundle.knownFunctionNames,
+                                    allowFenceTranslation = !bundle.isDocExample,
+                                )
                             if (formatted.isNotEmpty()) {
                                 append(formatted).append('\n')
                             }
@@ -237,14 +245,42 @@ internal class CppExprAndStmtEmitter(
         }
     }
 
+    private tailrec fun unwrapTransparentFrame(frame: PacketFrame): PacketFrame =
+        when (frame.nodeTypeId) {
+            KtNodeTypes.ANNOTATED_EXPRESSION_ID -> {
+                val inner =
+                    FrameAstHelpers
+                        .childFrames(stream, frame)
+                        .lastOrNull {
+                            it.nodeTypeId != KtNodeTypes.ANNOTATION_ENTRY_ID &&
+                                it.nodeTypeId != KtNodeTypes.ANNOTATION_ID
+                        }
+                if (inner != null) unwrapTransparentFrame(inner) else frame
+            }
+            KtNodeTypes.LABELED_EXPRESSION_ID -> {
+                val inner =
+                    FrameAstHelpers
+                        .childFrames(stream, frame)
+                        .lastOrNull {
+                            it.nodeTypeId != KtNodeTypes.LABEL_QUALIFIER_ID &&
+                                it.nodeTypeId != KtNodeTypes.LABEL_ID
+                        }
+                if (inner != null) unwrapTransparentFrame(inner) else frame
+            }
+            else -> frame
+        }
+
     private fun emitValueAssignmentOrReturn(
         exprFrame: PacketFrame,
         indent: String,
         targetReturn: Boolean,
         targetVar: String?,
     ): String {
+        val unwrappedExpr = unwrapTransparentFrame(exprFrame)
         // Check if this expression is itself a hoisted suspend control-flow node
-        val hoistedCf = bundle.cfPlan.hoistedSuspendControlFlowsByExpr[exprFrame.frameIndex]
+        val hoistedCf =
+            bundle.cfPlan.hoistedSuspendControlFlowsByExpr[exprFrame.frameIndex]
+                ?: bundle.cfPlan.hoistedSuspendControlFlowsByExpr[unwrappedExpr.frameIndex]
         if (hoistedCf != null) {
             includes.addSystem("utility")
             return if (targetReturn) {
@@ -254,32 +290,92 @@ internal class CppExprAndStmtEmitter(
             }
         }
 
-        return when (exprFrame.nodeTypeId) {
+        if (unwrappedExpr.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
+            val binChildren = FrameAstHelpers.childFrames(stream, unwrappedExpr)
+            if (binChildren.size >= 3 &&
+                FrameAstHelpers.operationTokenId(stream, binChildren[1]) == KtTokens.ELVIS_ID
+            ) {
+                val rhsUnwrapped = unwrapTransparentFrame(binChildren[2])
+                if (rhsUnwrapped.nodeTypeId in ELVIS_CONTROL_TRANSFER_NODE_TYPES) {
+                    val elvisTemp = freshTemp("kxs_elvis")
+                    val lhsCode = emitExpression(binChildren[0])
+                    val transferStmt =
+                        emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
+                    includes.addSystem("type_traits")
+                    val derefExpr =
+                        "([&]() -> decltype(auto) { " +
+                            "if constexpr (std::is_pointer_v<std::decay_t<decltype($elvisTemp)>>) " +
+                            "return $elvisTemp; else return *$elvisTemp; }())"
+                    val assignLine =
+                        if (targetReturn) {
+                            "${indent}return $derefExpr;\n"
+                        } else {
+                            "$indent$targetVar = $derefExpr;\n"
+                        }
+                    return buildString {
+                        append(indent)
+                        append("auto ")
+                        append(elvisTemp)
+                        append(" = ")
+                        append(lhsCode)
+                        append(";\n")
+                        append(indent)
+                        append("if (!")
+                        append(elvisTemp)
+                        append(") {\n")
+                        append(transferStmt)
+                        append(indent)
+                        append("}\n")
+                        append(assignLine)
+                    }
+                }
+            }
+        }
+
+        return when (unwrappedExpr.nodeTypeId) {
             KtNodeTypes.RETURN_ID,
             KtNodeTypes.THROW_ID,
             KtNodeTypes.BREAK_ID,
             KtNodeTypes.CONTINUE_ID,
-            -> emitStatement(exprFrame, indent, inValuePosition = false, resultTargetVar = null)
+            -> emitStatement(unwrappedExpr, indent, inValuePosition = false, resultTargetVar = null)
 
             KtNodeTypes.IF_ID ->
-                if (targetReturn && canEmitTernaryIf(exprFrame)) {
-                    "${indent}return ${emitTernaryIfCore(exprFrame)};\n"
+                if (targetReturn && canEmitTernaryIf(unwrappedExpr)) {
+                    "${indent}return ${emitTernaryIfCore(unwrappedExpr)};\n"
                 } else {
-                    emitIfStatement(exprFrame, indent, inValuePosition = true, targetReturn = targetReturn, targetVar = targetVar)
+                    emitIfStatement(
+                        unwrappedExpr,
+                        indent,
+                        inValuePosition = true,
+                        targetReturn = targetReturn,
+                        targetVar = targetVar,
+                    )
                 }
 
             KtNodeTypes.WHEN_ID ->
-                emitWhenStatement(exprFrame, indent, inValuePosition = true, targetReturn = targetReturn, targetVar = targetVar)
+                emitWhenStatement(
+                    unwrappedExpr,
+                    indent,
+                    inValuePosition = true,
+                    targetReturn = targetReturn,
+                    targetVar = targetVar,
+                )
 
             KtNodeTypes.TRY_ID ->
-                emitTryStatement(exprFrame, indent, inValuePosition = true, targetReturn = targetReturn, targetVar = targetVar)
+                emitTryStatement(
+                    unwrappedExpr,
+                    indent,
+                    inValuePosition = true,
+                    targetReturn = targetReturn,
+                    targetVar = targetVar,
+                )
 
             KtNodeTypes.BLOCK_ID ->
-                "${emitBlock(exprFrame, indent.dropLast(4), isValueBlock = targetReturn, resultTargetVar = targetVar)}\n"
+                "${emitBlock(unwrappedExpr, indent.dropLast(4), isValueBlock = targetReturn, resultTargetVar = targetVar)}\n"
 
             else -> {
-                val rendered = emitExpression(exprFrame)
-                if (PacketFlags.hasFlag(exprFrame.flags, PacketFlags.DIVERGING_EXPR)) {
+                val rendered = emitExpression(unwrappedExpr)
+                if (PacketFlags.hasFlag(unwrappedExpr.flags, PacketFlags.DIVERGING_EXPR)) {
                     includes.addSystem("utility")
                     "$indent$rendered;\n${indent}std::unreachable();\n"
                 } else if (targetReturn) {
@@ -298,7 +394,13 @@ internal class CppExprAndStmtEmitter(
         resultTargetVar: String?,
     ): String {
         for (leadComment in FrameAstHelpers.extractLeadingDeclarationComments(stream, stmtFrame)) {
-            val formatted = FrameAstHelpers.formatCommentForCpp(leadComment, indent)
+            val formatted =
+                FrameAstHelpers.formatCommentForCpp(
+                    comment = leadComment,
+                    indent = indent,
+                    knownFunctionNames = bundle.knownFunctionNames,
+                    allowFenceTranslation = !bundle.isDocExample,
+                )
             if (formatted.isNotEmpty()) {
                 return formatted + "\n" + emitStatementBodyWithoutLeadingComments(stmtFrame, indent, inValuePosition, resultTargetVar)
             }
@@ -312,70 +414,112 @@ internal class CppExprAndStmtEmitter(
         inValuePosition: Boolean,
         resultTargetVar: String?,
     ): String {
+        val unwrappedStmt = unwrapTransparentFrame(stmtFrame)
         if (inValuePosition && resultTargetVar != null) {
-            when (stmtFrame.nodeTypeId) {
+            when (unwrappedStmt.nodeTypeId) {
                 KtNodeTypes.IF_ID ->
-                    return emitIfStatement(stmtFrame, indent, inValuePosition = true, targetReturn = false, targetVar = resultTargetVar)
+                    return emitIfStatement(
+                        unwrappedStmt,
+                        indent,
+                        inValuePosition = true,
+                        targetReturn = false,
+                        targetVar = resultTargetVar,
+                    )
                 KtNodeTypes.WHEN_ID ->
-                    return emitWhenStatement(stmtFrame, indent, inValuePosition = true, targetReturn = false, targetVar = resultTargetVar)
+                    return emitWhenStatement(
+                        unwrappedStmt,
+                        indent,
+                        inValuePosition = true,
+                        targetReturn = false,
+                        targetVar = resultTargetVar,
+                    )
                 KtNodeTypes.TRY_ID ->
-                    return emitTryStatement(stmtFrame, indent, inValuePosition = true, targetReturn = false, targetVar = resultTargetVar)
-                else -> return emitValueAssignmentOrReturn(stmtFrame, indent, targetReturn = false, targetVar = resultTargetVar)
+                    return emitTryStatement(
+                        unwrappedStmt,
+                        indent,
+                        inValuePosition = true,
+                        targetReturn = false,
+                        targetVar = resultTargetVar,
+                    )
+                else ->
+                    return emitValueAssignmentOrReturn(
+                        unwrappedStmt,
+                        indent,
+                        targetReturn = false,
+                        targetVar = resultTargetVar,
+                    )
             }
         }
 
         // Check inline call expansion (`let`, `also`, `run`, `apply`, `use`, `repeat`, `withLock`, `forEach`, inline fun)
-        bundle.suspendPlan.inlineExpansionsByCallFrame[stmtFrame.frameIndex]?.let { inlineExp ->
+        bundle.suspendPlan.inlineExpansionsByCallFrame[unwrappedStmt.frameIndex]?.let { inlineExp ->
             return emitInlineExpansionAsStatement(inlineExp, indent, targetVar = null)
         }
 
         // Check `memScoped { ... }`
-        bundle.ffiPlan.memScopedBlocksByFrame[stmtFrame.frameIndex]?.let { ms ->
+        bundle.ffiPlan.memScopedBlocksByFrame[unwrappedStmt.frameIndex]?.let { ms ->
             return emitMemScopedStatement(ms, indent)
         }
 
         // Check `usePinned { ... }`
-        bundle.ffiPlan.usePinnedBlocksByFrame[stmtFrame.frameIndex]?.let { up ->
+        bundle.ffiPlan.usePinnedBlocksByFrame[unwrappedStmt.frameIndex]?.let { up ->
             return emitUsePinnedStatement(up, indent)
         }
 
         // Check `atomicfu` loop/update statement
-        bundle.atomicPlan.atomicOpsByExprFrame[stmtFrame.frameIndex]?.let { aop ->
+        bundle.atomicPlan.atomicOpsByExprFrame[unwrappedStmt.frameIndex]?.let { aop ->
             if (aop.kind == AtomicOpKind.LOOP || aop.kind == AtomicOpKind.UPDATE) {
                 return emitAtomicLoopOrUpdateStatement(aop, indent)
             }
         }
 
         // Check verbatim inline C/C++ call statement
-        bundle.ffiPlan.inlineCppByFrame[stmtFrame.frameIndex]?.let { rawCpp ->
+        bundle.ffiPlan.inlineCppByFrame[unwrappedStmt.frameIndex]?.let { rawCpp ->
             return formatIndentedRawCpp(rawCpp, indent)
         }
 
-        return when (stmtFrame.nodeTypeId) {
-            KtNodeTypes.PROPERTY_ID -> emitLocalPropertyDecl(stmtFrame, indent)
-            KtNodeTypes.DESTRUCTURING_DECLARATION_ID -> emitDestructuringDecl(stmtFrame, indent)
-            KtNodeTypes.RETURN_ID -> emitReturnStmt(stmtFrame, indent)
-            KtNodeTypes.THROW_ID -> emitThrowStmt(stmtFrame, indent)
+        if (unwrappedStmt.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
+            val binChildren = FrameAstHelpers.childFrames(stream, unwrappedStmt)
+            if (binChildren.size >= 3 &&
+                FrameAstHelpers.operationTokenId(stream, binChildren[1]) == KtTokens.ELVIS_ID
+            ) {
+                val rhsUnwrapped = unwrapTransparentFrame(binChildren[2])
+                if (rhsUnwrapped.nodeTypeId in ELVIS_CONTROL_TRANSFER_NODE_TYPES) {
+                    val lhsCode = emitExpression(binChildren[0])
+                    val transferStmt =
+                        emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
+                    return "${indent}if (!($lhsCode)) {\n$transferStmt$indent}\n"
+                }
+            }
+        }
+
+        return when (unwrappedStmt.nodeTypeId) {
+            KtNodeTypes.PROPERTY_ID -> emitLocalPropertyDecl(unwrappedStmt, indent)
+            KtNodeTypes.FUN_ID -> emitLocalFunctionDecl(unwrappedStmt, indent)
+            KtNodeTypes.DESTRUCTURING_DECLARATION_ID -> emitDestructuringDecl(unwrappedStmt, indent)
+            KtNodeTypes.RETURN_ID -> emitReturnStmt(unwrappedStmt, indent)
+            KtNodeTypes.THROW_ID -> emitThrowStmt(unwrappedStmt, indent)
             KtNodeTypes.BREAK_ID -> "${indent}break;\n"
             KtNodeTypes.CONTINUE_ID -> "${indent}continue;\n"
             KtNodeTypes.IF_ID ->
-                emitIfStatement(stmtFrame, indent, inValuePosition = false, targetReturn = false, targetVar = null)
+                emitIfStatement(unwrappedStmt, indent, inValuePosition = false, targetReturn = false, targetVar = null)
             KtNodeTypes.WHEN_ID ->
-                emitWhenStatement(stmtFrame, indent, inValuePosition = false, targetReturn = false, targetVar = null)
+                emitWhenStatement(unwrappedStmt, indent, inValuePosition = false, targetReturn = false, targetVar = null)
             KtNodeTypes.TRY_ID ->
-                emitTryStatement(stmtFrame, indent, inValuePosition = false, targetReturn = false, targetVar = null)
-            KtNodeTypes.WHILE_ID -> emitWhileStmt(stmtFrame, indent)
-            KtNodeTypes.DO_WHILE_ID -> emitDoWhileStmt(stmtFrame, indent)
-            KtNodeTypes.FOR_ID -> emitForStmt(stmtFrame, indent)
-            KtNodeTypes.BLOCK_ID -> "${emitBlock(stmtFrame, indent, isValueBlock = false, resultTargetVar = null)}\n"
+                emitTryStatement(unwrappedStmt, indent, inValuePosition = false, targetReturn = false, targetVar = null)
+            KtNodeTypes.WHILE_ID -> emitWhileStmt(unwrappedStmt, indent)
+            KtNodeTypes.DO_WHILE_ID -> emitDoWhileStmt(unwrappedStmt, indent)
+            KtNodeTypes.FOR_ID -> emitForStmt(unwrappedStmt, indent)
+            KtNodeTypes.BLOCK_ID ->
+                "${emitBlock(unwrappedStmt, indent, isValueBlock = false, resultTargetVar = null)}\n"
             else -> {
-                if (stmtFrame.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID &&
-                    FrameAstHelpers.directIdentPacket(stream, stmtFrame)?.unescapedName == "Unit"
+                if (unwrappedStmt.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID &&
+                    FrameAstHelpers.directIdentPacket(stream, unwrappedStmt)?.unescapedName == "Unit"
                 ) {
                     return ""
                 }
-                val exprText = emitExpression(stmtFrame)
-                if (PacketFlags.hasFlag(stmtFrame.flags, PacketFlags.DIVERGING_EXPR)) {
+                val exprText = emitExpression(unwrappedStmt)
+                if (PacketFlags.hasFlag(unwrappedStmt.flags, PacketFlags.DIVERGING_EXPR)) {
                     includes.addSystem("utility")
                     "$indent$exprText;\n${indent}std::unreachable();\n"
                 } else {
@@ -481,11 +625,104 @@ internal class CppExprAndStmtEmitter(
                 "auto"
             }
         val constQual = if (!isVar && cppType != "void") "const " else ""
+        if (initFrame != null && initFrame.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
+            val ch = FrameAstHelpers.childFrames(stream, initFrame)
+            if (ch.size >= 3 &&
+                FrameAstHelpers.operationTokenId(stream, ch[1]) == KtTokens.ELVIS_ID
+            ) {
+                val rhsUnwrapped = unwrapTransparentFrame(ch[2])
+                if (rhsUnwrapped.nodeTypeId in ELVIS_CONTROL_TRANSFER_NODE_TYPES) {
+                    val elvisTemp = freshTemp("kxs_elvis")
+                    val lhsCode = emitExpression(ch[0])
+                    val transferStmt =
+                        emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
+                    includes.addSystem("type_traits")
+                    bindLocalName(kotlinName, cppName)
+                    return buildString {
+                        append(indent)
+                        append("auto ")
+                        append(elvisTemp)
+                        append(" = ")
+                        append(lhsCode)
+                        append(";\n")
+                        append(indent)
+                        append("if (!")
+                        append(elvisTemp)
+                        append(") {\n")
+                        append(transferStmt)
+                        append(indent)
+                        append("}\n")
+                        append(indent)
+                        append(constQual)
+                        append(cppType)
+                        append(' ')
+                        append(cppName)
+                        append(" = ([&]() -> decltype(auto) { if constexpr (std::is_pointer_v<std::decay_t<decltype(")
+                        append(elvisTemp)
+                        append(")>>) return ")
+                        append(elvisTemp)
+                        append("; else return *")
+                        append(elvisTemp)
+                        append("; }());\n")
+                    }
+                }
+            }
+        }
         bindLocalName(kotlinName, cppName)
         return if (initFrame != null) {
             "$indent$constQual$cppType $cppName = ${emitExpression(initFrame)};\n"
         } else {
             "$indent$cppType $cppName{};\n"
+        }
+    }
+
+    private fun emitLocalFunctionDecl(
+        fnFrame: PacketFrame,
+        indent: String,
+    ): String {
+        val ident = FrameAstHelpers.directIdentPacket(stream, fnFrame)
+        val kotlinName = ident?.unescapedName ?: "local_fn"
+        val cppName = ident?.targetCppName ?: CppNamingPolicy.toSnakeCase(kotlinName)
+        val paramList = FrameAstHelpers.firstChildFrame(stream, fnFrame, KtNodeTypes.VALUE_PARAMETER_LIST_ID)
+        val params = FrameAstHelpers.extractValueParams(stream, paramList)
+        val (_, retTypeFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, fnFrame)
+        val blockBody = FrameAstHelpers.firstChildFrame(stream, fnFrame, KtNodeTypes.BLOCK_ID)
+        val exprBody = if (blockBody == null) FrameAstHelpers.extractInitializerAfterEquals(stream, fnFrame) else null
+        val retType =
+            when {
+                retTypeFrame != null ->
+                    bundle.typeTranslator.translateTypeFrame(retTypeFrame, CppTypePosition.RETURN, fnFrame.flags)
+                blockBody != null -> "void"
+                else -> "auto"
+            }
+
+        bindLocalName(kotlinName, cppName)
+        return withLexicalScope {
+            val renderedParams =
+                params.joinToString(", ") { vp ->
+                    bindLocalName(vp.name, vp.cppName)
+                    val pType =
+                        vp.typeFrameIndex
+                            ?.let { bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.PARAMETER) }
+                            ?: "auto"
+                    "$pType ${vp.cppName}"
+                }
+            val trailingRet = if (retType != "auto") " -> $retType" else ""
+            val bodyCode =
+                when {
+                    blockBody != null ->
+                        emitBlock(blockBody, indent, isValueBlock = retType != "void" && retType != "auto", resultTargetVar = null)
+                    exprBody != null -> {
+                        val innerIndent = "$indent    "
+                        if (retType == "void") {
+                            "{\n$innerIndent${emitExpression(exprBody)};\n$indent}"
+                        } else {
+                            "{\n${innerIndent}return ${emitExpression(exprBody)};\n$indent}"
+                        }
+                    }
+                    else -> "{}"
+                }
+            "${indent}auto $cppName = [&]($renderedParams)$trailingRet $bodyCode;\n"
         }
     }
 
@@ -842,7 +1079,7 @@ internal class CppExprAndStmtEmitter(
         if (rangeFrame != null && rangeFrame.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
             val ch = FrameAstHelpers.childFrames(stream, rangeFrame)
             if (ch.size >= 3) {
-                val op = FrameAstHelpers.frameSourceSlice(stream, ch[1]).trim()
+                val op = FrameAstHelpers.operationSymbolName(stream, ch[1])
                 val lo = emitExpression(ch[0])
                 val hi = emitExpression(ch[2])
                 if (op == "..") return "$lhsCode >= $lo && $lhsCode <= $hi"
@@ -1011,7 +1248,7 @@ internal class CppExprAndStmtEmitter(
             if (rangeExpr != null && rangeExpr.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
                 val ch = FrameAstHelpers.childFrames(stream, rangeExpr)
                 if (ch.size >= 3) {
-                    val op = FrameAstHelpers.frameSourceSlice(stream, ch[1]).trim()
+                    val op = FrameAstHelpers.operationSymbolName(stream, ch[1])
                     val lo = emitExpression(ch[0])
                     val hi = emitExpression(ch[2])
                     when (op) {
@@ -1049,7 +1286,9 @@ internal class CppExprAndStmtEmitter(
                 val inner = "$indent    "
                 when (inlineExp.kind) {
                     BuiltinInlineKind.LET -> {
-                        val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "this"
+                        val recvCode =
+                            inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) }
+                                ?: (receiverSubstitution ?: "(*this)")
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
                         append(inner)
@@ -1062,7 +1301,9 @@ internal class CppExprAndStmtEmitter(
                         appendInlineLambdaBodyStatements(this, lambdaBody, inner, targetVar)
                     }
                     BuiltinInlineKind.ALSO -> {
-                        val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "this"
+                        val recvCode =
+                            inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) }
+                                ?: (receiverSubstitution ?: "(*this)")
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
                         append(inner)
@@ -1107,7 +1348,9 @@ internal class CppExprAndStmtEmitter(
                         }
                     }
                     BuiltinInlineKind.APPLY -> {
-                        val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "(*this)"
+                        val recvCode =
+                            inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) }
+                                ?: (receiverSubstitution ?: "(*this)")
                         val recvTemp = freshTemp("kxs_apply")
                         append(inner)
                             .append("auto&& ")
@@ -1192,7 +1435,9 @@ internal class CppExprAndStmtEmitter(
                         append(inner).append("}\n")
                     }
                     BuiltinInlineKind.FOR_EACH -> {
-                        val recvCode = inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) } ?: "{}"
+                        val recvCode =
+                            inlineExp.receiverExprFrameIndex?.let { emitExpression(stream.frames[it]) }
+                                ?: (receiverSubstitution ?: "(*this)")
                         val pName = inlineExp.lambdaParamNames.firstOrNull() ?: "it"
                         val pCpp = CppNamingPolicy.toSnakeCase(pName)
                         append(inner)
@@ -1399,7 +1644,7 @@ internal class CppExprAndStmtEmitter(
 
             KtNodeTypes.STRING_TEMPLATE_ID -> emitStringTemplate(exprFrame)
 
-            KtNodeTypes.THIS_EXPRESSION_ID -> receiverSubstitution ?: "(*this)"
+            KtNodeTypes.THIS_EXPRESSION_ID -> emitThisExpr(exprFrame)
             KtNodeTypes.SUPER_EXPRESSION_ID -> "Base"
 
             KtNodeTypes.REFERENCE_EXPRESSION_ID -> emitReferenceExpr(exprFrame)
@@ -1433,17 +1678,81 @@ internal class CppExprAndStmtEmitter(
             KtNodeTypes.CLASS_LITERAL_EXPRESSION_ID -> {
                 includes.addSystem("typeinfo")
                 val lhs = FrameAstHelpers.childFrames(stream, exprFrame).firstOrNull()
-                val typeName = lhs?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() } ?: "void"
-                "typeid(${CppNamingPolicy.toTypeName(typeName)})"
+                val typeCode =
+                    when {
+                        lhs == null -> "void"
+                        lhs.nodeTypeId == KtNodeTypes.TYPE_REFERENCE_ID || lhs.nodeTypeId == KtNodeTypes.USER_TYPE_ID ->
+                            bundle.typeTranslator.translateTypeFrame(lhs, CppTypePosition.TYPE_ARGUMENT)
+                        lhs.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID ||
+                            lhs.nodeTypeId == KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID -> {
+                            val simple = FrameAstHelpers.dottedNameText(stream, lhs).substringAfterLast('.').ifEmpty { "void" }
+                            CppNamingPolicy.toTypeName(simple)
+                        }
+                        else -> "decltype(${emitExpression(lhs)})"
+                    }
+                "typeid($typeCode)"
             }
-            else -> FrameAstHelpers.frameSourceSlice(stream, exprFrame).trim()
+            KtNodeTypes.THROW_ID -> {
+                val exprChild = FrameAstHelpers.childFrames(stream, exprFrame).firstOrNull()
+                val rendered = exprChild?.let { emitThrowableExpr(it) } ?: "std::runtime_error(\"throw\")"
+                "throw $rendered"
+            }
+            KtNodeTypes.LABELED_EXPRESSION_ID -> {
+                val inner =
+                    FrameAstHelpers
+                        .childFrames(stream, exprFrame)
+                        .lastOrNull { it.nodeTypeId != KtNodeTypes.LABEL_QUALIFIER_ID && it.nodeTypeId != KtNodeTypes.LABEL_ID }
+                if (inner != null) emitExpression(inner) else "{}"
+            }
+            KtNodeTypes.ANNOTATED_EXPRESSION_ID -> {
+                val inner =
+                    FrameAstHelpers
+                        .childFrames(stream, exprFrame)
+                        .lastOrNull { it.nodeTypeId != KtNodeTypes.ANNOTATION_ENTRY_ID && it.nodeTypeId != KtNodeTypes.ANNOTATION_ID }
+                if (inner != null) emitExpression(inner) else "{}"
+            }
+            KtNodeTypes.COLLECTION_LITERAL_EXPRESSION_ID -> {
+                val elems = FrameAstHelpers.childFrames(stream, exprFrame).joinToString(", ") { emitExpression(it) }
+                "{$elems}"
+            }
+            KtNodeTypes.BLOCK_ID -> {
+                "[&]() ${emitBlock(exprFrame, "", isValueBlock = true, resultTargetVar = null)}()"
+            }
+            KtNodeTypes.OBJECT_LITERAL_ID -> emitObjectLiteralExpr(exprFrame)
+            else ->
+                throw IllegalArgumentException(
+                    "${stream.sourcePath}:${exprFrame.span.startLine}:${exprFrame.span.startColumn}: " +
+                        "unsupported Kotlin expression node ${KtNodeTypes.debugName(exprFrame.nodeTypeId)}",
+                )
         }
+    }
+
+    private fun emitObjectLiteralExpr(objFrame: PacketFrame): String {
+        val objDecl = FrameAstHelpers.firstChildFrame(stream, objFrame, KtNodeTypes.OBJECT_DECLARATION_ID) ?: objFrame
+        val superList = FrameAstHelpers.firstChildFrame(stream, objDecl, KtNodeTypes.SUPER_TYPE_LIST_ID)
+        val superTypes =
+            superList
+                ?.let { sl ->
+                    FrameAstHelpers.childFrames(stream, sl).mapNotNull { entry ->
+                        val tr = FrameAstHelpers.findDescendantFrame(stream, entry, KtNodeTypes.TYPE_REFERENCE_ID)
+                        tr?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT) }
+                    }
+                }.orEmpty()
+        val anonName = freshTemp("KxsAnonObject")
+        val superClause = if (superTypes.isNotEmpty()) " : ${superTypes.joinToString(", ") { "public $it" }}" else ""
+        includes.addSystem("memory")
+        return "([&]() { struct $anonName$superClause {}; return std::make_shared<$anonName>(); }())"
     }
 
     private fun emitConstantLiteral(litFrame: PacketFrame): String {
         val pkt =
-            stream.packets.getOrNull(litFrame.firstPacketIndex) as? SyntaxPacket.LiteralPacket
-                ?: return FrameAstHelpers.frameSourceSlice(stream, litFrame).trim()
+            (litFrame.firstPacketIndex..litFrame.lastPacketIndex)
+                .asSequence()
+                .mapNotNull { stream.packets.getOrNull(it) as? SyntaxPacket.LiteralPacket }
+                .firstOrNull()
+                ?: throw IllegalArgumentException(
+                    "${stream.sourcePath}:${litFrame.span.startLine}:${litFrame.span.startColumn}: missing LiteralPacket",
+                )
         return when (pkt.literalKind) {
             LiteralPacketKind.NULL -> "nullptr"
             LiteralPacketKind.BOOLEAN -> pkt.rawText
@@ -1511,7 +1820,7 @@ internal class CppExprAndStmtEmitter(
                 val entry = stream.frames[ref]
                 when (entry.nodeTypeId) {
                     KtNodeTypes.LITERAL_STRING_TEMPLATE_ENTRY_ID -> {
-                        val rawPart = FrameAstHelpers.frameSourceSlice(stream, entry)
+                        val rawPart = extractStringSegmentRaw(entry, StringSegmentKind.LITERAL_PART)
                         if (PacketFlags.hasFlag(entry.flags, PacketFlags.HAS_LONE_SURROGATE)) {
                             flushLiteral()
                             parts.add(encodeSurrogateSafeCppString(rawPart))
@@ -1520,7 +1829,7 @@ internal class CppExprAndStmtEmitter(
                         }
                     }
                     KtNodeTypes.ESCAPE_STRING_TEMPLATE_ENTRY_ID -> {
-                        val rawEsc = FrameAstHelpers.frameSourceSlice(stream, entry)
+                        val rawEsc = extractStringSegmentRaw(entry, StringSegmentKind.ESCAPE_SEQ)
                         if (PacketFlags.hasFlag(entry.flags, PacketFlags.HAS_LONE_SURROGATE) &&
                             rawEsc.startsWith("\\u") && rawEsc.length == 6
                         ) {
@@ -1566,18 +1875,43 @@ internal class CppExprAndStmtEmitter(
             "else return std::to_string(kxs_v); }())"
     }
 
+    private fun extractStringSegmentRaw(
+        entryFrame: PacketFrame,
+        expectedKind: StringSegmentKind,
+    ): String {
+        if (entryFrame.firstPacketIndex > entryFrame.lastPacketIndex || stream.packets.isEmpty()) {
+            return ""
+        }
+        val sb = StringBuilder()
+        for (idx in entryFrame.firstPacketIndex..entryFrame.lastPacketIndex) {
+            val pkt = stream.packets[idx]
+            if (pkt is SyntaxPacket.StringSegmentPacket && pkt.segmentKind == expectedKind) {
+                sb.append(pkt.rawText)
+            }
+        }
+        return sb.toString()
+    }
+
     private fun isKnownStringSymbol(kotlinName: String): Boolean {
         if (enclosingClass != null) {
             val pMatch = enclosingClass.primaryConstructorParams.firstOrNull { it.name == kotlinName }
             if (pMatch?.typeFrameIndex != null) {
-                val slice = FrameAstHelpers.frameSourceSlice(stream, stream.frames[pMatch.typeFrameIndex]).trim()
-                if (slice == "String") return true
+                val tf = stream.frames[pMatch.typeFrameIndex]
+                if (FrameAstHelpers.extractPrimaryTypeSimpleName(stream, tf) == "String" &&
+                    !FrameAstHelpers.isNullableTypeFrame(stream, tf)
+                ) {
+                    return true
+                }
             }
         }
         val prop = bundle.symbols.propertiesByName[kotlinName]
         if (prop?.returnTypeFrameIndex != null) {
-            val slice = FrameAstHelpers.frameSourceSlice(stream, stream.frames[prop.returnTypeFrameIndex]).trim()
-            if (slice == "String") return true
+            val tf = stream.frames[prop.returnTypeFrameIndex]
+            if (FrameAstHelpers.extractPrimaryTypeSimpleName(stream, tf) == "String" &&
+                !FrameAstHelpers.isNullableTypeFrame(stream, tf)
+            ) {
+                return true
+            }
         }
         return false
     }
@@ -1616,34 +1950,116 @@ internal class CppExprAndStmtEmitter(
             }
         }
 
+    private fun emitThisExpr(thisFrame: PacketFrame): String {
+        val labelFrame = FrameAstHelpers.firstChildFrame(stream, thisFrame, KtNodeTypes.LABEL_QUALIFIER_ID)
+        if (labelFrame != null) {
+            val labelName = FrameAstHelpers.directIdentPacket(stream, labelFrame)?.unescapedName
+            if (labelName != null && enclosingClass != null) {
+                if (enclosingClass.kotlinName == labelName) {
+                    return "(*this)"
+                }
+                var cur: KtClassSymbol? = enclosingClass
+                var hops = 0
+                while (cur != null && cur.isInner) {
+                    val parent = cur.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] } ?: break
+                    hops += 1
+                    if (parent.kotlinName == labelName) {
+                        val ptrChain = if (hops == 1) "outer_" else "${"outer_->".repeat(hops - 1)}outer_"
+                        return "(*$ptrChain)"
+                    }
+                    cur = parent
+                }
+            }
+            return "(*this)"
+        }
+        return receiverSubstitution ?: "(*this)"
+    }
+
+    private fun resolveOuterChainPrefix(targetOwnerClassFrameIndex: Int?): String? {
+        if (targetOwnerClassFrameIndex == null || enclosingClass == null) return null
+        if (targetOwnerClassFrameIndex == enclosingClass.frameIndex) return ""
+        var cur: KtClassSymbol? = enclosingClass
+        var hops = 0
+        while (cur != null && cur.isInner) {
+            val parentIdx = cur.enclosingClassFrameIndex ?: break
+            hops += 1
+            if (parentIdx == targetOwnerClassFrameIndex) {
+                return "outer_->".repeat(hops)
+            }
+            cur = bundle.symbols.classesByFrame[parentIdx]
+        }
+        return null
+    }
+
+    private fun resolveOuterPointerExpr(targetOwnerClassFrameIndex: Int?): String? {
+        if (targetOwnerClassFrameIndex == null || enclosingClass == null) return null
+        if (targetOwnerClassFrameIndex == enclosingClass.frameIndex) return "this"
+        var cur: KtClassSymbol? = enclosingClass
+        var hops = 0
+        while (cur != null && cur.isInner) {
+            val parentIdx = cur.enclosingClassFrameIndex ?: break
+            hops += 1
+            if (parentIdx == targetOwnerClassFrameIndex) {
+                return if (hops == 1) "outer_" else "${"outer_->".repeat(hops - 1)}outer_"
+            }
+            cur = bundle.symbols.classesByFrame[parentIdx]
+        }
+        return null
+    }
+
+    private fun lookupAccessibleClassByName(kotlinName: String): KtClassSymbol? {
+        var cur: KtClassSymbol? = enclosingClass
+        while (cur != null) {
+            for (nestedIdx in cur.memberClassFrameIndices) {
+                val sub = bundle.symbols.classesByFrame[nestedIdx]
+                if (sub != null && sub.kotlinName == kotlinName) {
+                    return sub
+                }
+            }
+            cur = cur.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] }
+        }
+        return bundle.symbols.classesByName[kotlinName]
+    }
+
     private fun emitReferenceExpr(refFrame: PacketFrame): String {
         val pkt =
             FrameAstHelpers.directIdentPacket(stream, refFrame)
-                ?: return FrameAstHelpers.frameSourceSlice(stream, refFrame).trim()
+                ?: throw IllegalArgumentException(
+                    "${stream.sourcePath}:${refFrame.span.startLine}:${refFrame.span.startColumn}: missing IdentPacket in REFERENCE_EXPRESSION",
+                )
         val ktName = pkt.unescapedName
 
         resolveBoundName(ktName)?.let { return it }
 
-        // Check if `ktName` is an enum entry, private field, or property on `enclosingClass`
+        // Check if `ktName` is an enum entry, private field, or property on `enclosingClass` or an `inner` outer class
         if (enclosingClass != null) {
             val enumEntry = enclosingClass.enumEntries.firstOrNull { it.kotlinName == ktName }
             if (enumEntry != null) {
                 return "${enclosingClass.cppName}::${enumEntry.cppName}"
             }
-            val ctorProp = enclosingClass.primaryConstructorParams.firstOrNull { (it.isVal || it.isVar) && it.name == ktName }
-            if (ctorProp != null) {
-                val vpFrame = stream.frames[ctorProp.frameIndex]
-                return if (PacketFlags.hasFlag(vpFrame.flags, PacketFlags.MOD_PRIVATE)) {
-                    CppNamingPolicy.toPrivateFieldName(ktName)
-                } else {
-                    ctorProp.cppName
+            var cur: KtClassSymbol? = enclosingClass
+            var prefix = ""
+            while (cur != null) {
+                val ctorProp = cur.primaryConstructorParams.firstOrNull { (it.isVal || it.isVar) && it.name == ktName }
+                if (ctorProp != null) {
+                    val vpFrame = stream.frames[ctorProp.frameIndex]
+                    val fieldName =
+                        if (PacketFlags.hasFlag(vpFrame.flags, PacketFlags.MOD_PRIVATE)) {
+                            CppNamingPolicy.toPrivateFieldName(ktName)
+                        } else {
+                            ctorProp.cppName
+                        }
+                    return "$prefix$fieldName"
                 }
-            }
-            for (mPropIdx in enclosingClass.memberPropertyFrameIndices) {
-                val mProp = bundle.symbols.propertiesByFrame[mPropIdx] ?: continue
-                if (mProp.kotlinName == ktName) {
-                    return mProp.cppName
+                for (mPropIdx in cur.memberPropertyFrameIndices) {
+                    val mProp = bundle.symbols.propertiesByFrame[mPropIdx] ?: continue
+                    if (mProp.kotlinName == ktName) {
+                        return "$prefix${mProp.cppName}"
+                    }
                 }
+                if (!cur.isInner) break
+                cur = cur.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] }
+                prefix += "outer_->"
             }
         }
 
@@ -1657,15 +2073,20 @@ internal class CppExprAndStmtEmitter(
 
     private fun emitDotQualifiedExpr(dotFrame: PacketFrame): String {
         val parts = FrameAstHelpers.childFrames(stream, dotFrame)
-        if (parts.size != 2) {
-            return FrameAstHelpers.frameSourceSlice(stream, dotFrame).trim()
+        require(parts.size == 2) {
+            "${stream.sourcePath}:${dotFrame.span.startLine}:${dotFrame.span.startColumn}: malformed DOT_QUALIFIED_EXPRESSION"
         }
         val recvFrame = parts[0]
         val selFrame = parts[1]
+        val recvSimpleIdent =
+            if (recvFrame.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
+                FrameAstHelpers.directIdentPacket(stream, recvFrame)?.unescapedName
+            } else {
+                null
+            }
 
         // 1. Check `Result.success(v)` / `Result.failure(e)`
-        val recvRaw = FrameAstHelpers.frameSourceSlice(stream, recvFrame).trim()
-        if (recvRaw == "Result" && selFrame.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
+        if (recvSimpleIdent == "Result" && selFrame.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
             val fnName = extractCalleeSimpleName(selFrame)
             val args = extractCallArgExpressions(selFrame)
             includes.addProject("kotlinx/coroutines/Result.hpp")
@@ -1693,8 +2114,15 @@ internal class CppExprAndStmtEmitter(
                         (pkt.unescapedName.firstOrNull()?.isUpperCase() == true && resolveBoundName(pkt.unescapedName) == null)
                 } == true
 
-        val recvCode = emitExpression(recvFrame)
-        val isPtrReceiver = isPointerOrSharedPtrReceiver(recvFrame, recvCode)
+        val rawRecvCode = emitExpression(recvFrame)
+        val unwrappedOuterPtr =
+            if (rawRecvCode.startsWith("(*") && rawRecvCode.endsWith(")") && rawRecvCode.contains("outer_")) {
+                rawRecvCode.substring(2, rawRecvCode.length - 1)
+            } else {
+                null
+            }
+        val recvCode = unwrappedOuterPtr ?: rawRecvCode
+        val isPtrReceiver = unwrappedOuterPtr != null || isPointerOrSharedPtrReceiver(recvFrame, recvCode)
 
         if (selFrame.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
             if (isStaticTypeReceiver) {
@@ -1707,9 +2135,9 @@ internal class CppExprAndStmtEmitter(
 
         val memberKt =
             FrameAstHelpers.directIdentPacket(stream, selFrame)?.unescapedName
-                ?: FrameAstHelpers.frameSourceSlice(stream, selFrame).trim()
+                ?: FrameAstHelpers.operationSymbolName(stream, selFrame)
         if (isStaticTypeReceiver) {
-            val sameCls = bundle.symbols.classesByName[recvRaw]
+            val sameCls = recvSimpleIdent?.let { bundle.symbols.classesByName[it] }
             val isEnumOrConst =
                 sameCls?.enumEntries?.any { it.kotlinName == memberKt } == true ||
                     (memberKt.length > 1 && memberKt.all { it.isUpperCase() || it.isDigit() || it == '_' })
@@ -1740,15 +2168,19 @@ internal class CppExprAndStmtEmitter(
         }
 
         val op = if (isPtrReceiver) "->" else "."
-        if (recvFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID && receiverSubstitution == null) {
+        val isUnlabeledThis =
+            recvFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID &&
+                FrameAstHelpers.firstChildFrame(stream, recvFrame, KtNodeTypes.LABEL_QUALIFIER_ID) == null
+        if (isUnlabeledThis && receiverSubstitution == null) {
             return "this->${resolveMemberFieldOrPropName(memberKt)}"
         }
         return "$recvCode$op${resolveMemberFieldOrPropName(memberKt)}"
     }
 
     private fun resolveMemberFieldOrPropName(memberKt: String): String {
-        if (enclosingClass != null) {
-            val ctorProp = enclosingClass.primaryConstructorParams.firstOrNull { (it.isVal || it.isVar) && it.name == memberKt }
+        var cur: KtClassSymbol? = enclosingClass
+        while (cur != null) {
+            val ctorProp = cur.primaryConstructorParams.firstOrNull { (it.isVal || it.isVar) && it.name == memberKt }
             if (ctorProp != null) {
                 val vpFrame = stream.frames[ctorProp.frameIndex]
                 return if (PacketFlags.hasFlag(vpFrame.flags, PacketFlags.MOD_PRIVATE)) {
@@ -1757,10 +2189,11 @@ internal class CppExprAndStmtEmitter(
                     ctorProp.cppName
                 }
             }
-            for (pIdx in enclosingClass.memberPropertyFrameIndices) {
+            for (pIdx in cur.memberPropertyFrameIndices) {
                 val p = bundle.symbols.propertiesByFrame[pIdx] ?: continue
                 if (p.kotlinName == memberKt) return p.cppName
             }
+            cur = cur.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] }
         }
         return CppNamingPolicy.toSnakeCase(memberKt)
     }
@@ -1785,7 +2218,9 @@ internal class CppExprAndStmtEmitter(
 
     private fun emitSafeAccessExpr(safeFrame: PacketFrame): String {
         val parts = FrameAstHelpers.childFrames(stream, safeFrame)
-        if (parts.size != 2) return FrameAstHelpers.frameSourceSlice(stream, safeFrame).trim()
+        require(parts.size == 2) {
+            "${stream.sourcePath}:${safeFrame.span.startLine}:${safeFrame.span.startColumn}: malformed SAFE_ACCESS_EXPRESSION"
+        }
         val lhsCode = emitExpression(parts[0])
         val temp = bundle.cfPlan.singleEvalTempNamesByFrame[safeFrame.frameIndex]
         val selFrame = parts[1]
@@ -1823,7 +2258,30 @@ internal class CppExprAndStmtEmitter(
 
         // Builtin Kotlin standard functions / pre-conditions / collections
         if (receiverCode == null) {
+            if (receiverSubstitution != null) {
+                when (calleeKt) {
+                    "isEmpty" -> return "$receiverSubstitution.empty()"
+                    "isNotEmpty" -> return "(!$receiverSubstitution.empty())"
+                    "toTypedArray" -> return receiverSubstitution
+                }
+            }
             when (calleeKt) {
+                "Array" -> {
+                    if (args.size == 2) {
+                        includes.addSystem("cstdint")
+                        includes.addSystem("cstddef")
+                        includes.addSystem("vector")
+                        val countVar = freshTemp("kxs_n")
+                        val initVar = freshTemp("kxs_init")
+                        val arrVar = freshTemp("kxs_arr")
+                        val idxVar = freshTemp("kxs_i")
+                        val elemType = typeArgs.firstOrNull() ?: "decltype($initVar(0))"
+                        return "([&]() { const auto $countVar = ${args[0]}; auto $initVar = ${args[1]}; " +
+                            "std::vector<$elemType> $arrVar; $arrVar.reserve(static_cast<std::size_t>($countVar)); " +
+                            "for (std::int32_t $idxVar = 0; $idxVar < $countVar; ++$idxVar) { $arrVar.push_back($initVar($idxVar)); } " +
+                            "return $arrVar; }())"
+                    }
+                }
                 "check", "require" -> {
                     includes.addSystem("stdexcept")
                     val cond = args.getOrNull(0) ?: "true"
@@ -1886,6 +2344,7 @@ internal class CppExprAndStmtEmitter(
             when (calleeKt) {
                 "isEmpty" -> return "$receiverCode${op}empty()"
                 "isNotEmpty" -> return "(!$receiverCode${op}empty())"
+                "toTypedArray" -> return if (receiverIsPointer) "(*$receiverCode)" else receiverCode
                 "add" -> return "$receiverCode${op}push_back(${args.joinToString(", ")})"
                 "toString" -> return "$receiverCode${op}to_string()"
                 "getOrThrow" -> return "$receiverCode${op}get_or_throw()"
@@ -1905,10 +2364,41 @@ internal class CppExprAndStmtEmitter(
         }
 
         // Constructor invocation vs function/method invocation
-        val sameFileClass = bundle.symbols.classesByName[calleeKt]
+        val sameFileClass = lookupAccessibleClassByName(calleeKt)
         val isCtorCall =
             receiverCode == null &&
                 (sameFileClass != null || (calleeKt.firstOrNull()?.isUpperCase() == true && calleeKt !in bundle.symbols.functionsByName))
+        val effectiveArgs =
+            if (isCtorCall && sameFileClass != null && sameFileClass.isInner) {
+                val outerPtr = resolveOuterPointerExpr(sameFileClass.enclosingClassFrameIndex)
+                if (outerPtr != null) listOf(outerPtr) + args else args
+            } else {
+                args
+            }
+
+        if (receiverCode == null && !isCtorCall && enclosingClass != null && enclosingClass.isInner) {
+            val hasOwnMethod =
+                enclosingClass.memberFunctionFrameIndices.any {
+                    bundle.symbols.functionsByFrame[it]?.kotlinName == calleeKt
+                }
+            if (!hasOwnMethod) {
+                var cur = enclosingClass.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] }
+                while (cur != null) {
+                    val outerFn =
+                        cur.memberFunctionFrameIndices
+                            .mapNotNull { bundle.symbols.functionsByFrame[it] }
+                            .firstOrNull { it.kotlinName == calleeKt }
+                    if (outerFn != null) {
+                        val chain = resolveOuterChainPrefix(cur.frameIndex).orEmpty()
+                        val tSuffix = if (typeArgs.isNotEmpty()) "<${typeArgs.joinToString(", ")}>" else ""
+                        return "$chain${outerFn.cppName}$tSuffix(${effectiveArgs.joinToString(", ")})"
+                    }
+                    if (!cur.isInner) break
+                    cur = cur.enclosingClassFrameIndex?.let { bundle.symbols.classesByFrame[it] }
+                }
+            }
+        }
+
         val targetName =
             when {
                 isCtorCall -> sameFileClass?.cppName ?: CppNamingPolicy.toTypeName(calleeKt)
@@ -1923,10 +2413,10 @@ internal class CppExprAndStmtEmitter(
 
         val tSuffix = if (typeArgs.isNotEmpty()) "<${typeArgs.joinToString(", ")}>" else ""
         return if (receiverCode == null) {
-            "$targetName$tSuffix(${args.joinToString(", ")})"
+            "$targetName$tSuffix(${effectiveArgs.joinToString(", ")})"
         } else {
             val op = if (receiverIsPointer) "->" else "."
-            "$receiverCode$op$targetName$tSuffix(${args.joinToString(", ")})"
+            "$receiverCode$op$targetName$tSuffix(${effectiveArgs.joinToString(", ")})"
         }
     }
 
@@ -1965,9 +2455,11 @@ internal class CppExprAndStmtEmitter(
 
     private fun emitBinaryExpr(binFrame: PacketFrame): String {
         val ch = FrameAstHelpers.childFrames(stream, binFrame)
-        if (ch.size < 3) return FrameAstHelpers.frameSourceSlice(stream, binFrame).trim()
+        require(ch.size >= 3) {
+            "${stream.sourcePath}:${binFrame.span.startLine}:${binFrame.span.startColumn}: malformed BINARY_EXPRESSION"
+        }
         val lhsFrame = ch[0]
-        val opText = FrameAstHelpers.frameSourceSlice(stream, ch[1]).trim()
+        val opText = FrameAstHelpers.operationSymbolName(stream, ch[1])
         val rhsFrame = ch[2]
 
         val lhs = emitExpression(lhsFrame)
@@ -2037,21 +2529,17 @@ internal class CppExprAndStmtEmitter(
         val lhs = FrameAstHelpers.childFrames(stream, castFrame).firstOrNull()
         val opRef = FrameAstHelpers.firstChildFrame(stream, castFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
         val tr = FrameAstHelpers.firstChildFrame(stream, castFrame, KtNodeTypes.TYPE_REFERENCE_ID)
-        val opText = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() } ?: "as"
+        val isSafeCast = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.AS_SAFE_ID
         val lhsCode = lhs?.let { emitExpression(it) } ?: "nullptr"
         val targetCpp = tr?.let { bundle.typeTranslator.translateTypeFrame(it, CppTypePosition.VALUE) } ?: "void*"
         val cleanType = targetCpp.removeSuffix("&")
 
-        return if (opText == "as?") {
+        return if (isSafeCast) {
             val rawTarget = cleanType.removeSuffix("*")
             includes.addSystem("memory")
             "dynamic_cast<$rawTarget*>($lhsCode)"
         } else {
-            if (cleanType.endsWith("*")) {
-                "static_cast<$cleanType>($lhsCode)"
-            } else {
-                "static_cast<$cleanType>($lhsCode)"
-            }
+            "static_cast<$cleanType>($lhsCode)"
         }
     }
 
@@ -2059,7 +2547,7 @@ internal class CppExprAndStmtEmitter(
         val lhs = FrameAstHelpers.childFrames(stream, isFrame).firstOrNull()
         val opRef = FrameAstHelpers.firstChildFrame(stream, isFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
         val tr = FrameAstHelpers.firstChildFrame(stream, isFrame, KtNodeTypes.TYPE_REFERENCE_ID)
-        val negated = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() } == "!is"
+        val negated = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.NOT_IS_ID
         val lhsCode = lhs?.let { emitExpression(it) } ?: "this"
         val cppType =
             tr
@@ -2078,7 +2566,7 @@ internal class CppExprAndStmtEmitter(
             FrameAstHelpers
                 .childFrames(stream, prefixFrame)
                 .lastOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
-        val op = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() }.orEmpty()
+        val op = opRef?.let { FrameAstHelpers.operationSymbolName(stream, it) }.orEmpty()
         val inner = operand?.let { emitExpression(it) }.orEmpty()
         return "$op$inner"
     }
@@ -2089,9 +2577,10 @@ internal class CppExprAndStmtEmitter(
                 .childFrames(stream, postfixFrame)
                 .firstOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
         val opRef = FrameAstHelpers.firstChildFrame(stream, postfixFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
-        val op = opRef?.let { FrameAstHelpers.frameSourceSlice(stream, it).trim() }.orEmpty()
+        val opId = opRef?.let { FrameAstHelpers.operationTokenId(stream, it) }
+        val op = opRef?.let { FrameAstHelpers.operationSymbolName(stream, it) }.orEmpty()
         val inner = operand?.let { emitExpression(it) }.orEmpty()
-        return if (op == "!!") {
+        return if (opId == KtTokens.EXCLEXCL_ID) {
             includes.addSystem("stdexcept")
             includes.addSystem("type_traits")
             "([&]() -> decltype(auto) { auto&& kxs_v = $inner; if (!kxs_v) throw std::runtime_error(\"NullPointerException\"); " +
@@ -2237,9 +2726,10 @@ internal class CppExprAndStmtEmitter(
         for (fnSym in bundle.symbols.functionsByFrame.values) {
             val match = fnSym.valueParams.firstOrNull { it.name == kotlinName }
             if (match?.typeFrameIndex != null) {
-                val raw = FrameAstHelpers.frameSourceSlice(stream, stream.frames[match.typeFrameIndex]).trim()
-                if (raw.endsWith("?") || raw == "Any" || raw == "Any?") return true
-                val cppT = bundle.typeTranslator.translateTypeFrame(stream.frames[match.typeFrameIndex], CppTypePosition.PARAMETER)
+                val tf = stream.frames[match.typeFrameIndex]
+                val simple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, tf)
+                if (FrameAstHelpers.isNullableTypeFrame(stream, tf) || simple == "Any") return true
+                val cppT = bundle.typeTranslator.translateTypeFrame(tf, CppTypePosition.PARAMETER)
                 if (cppT.endsWith("*") || cppT.startsWith("std::shared_ptr<")) return true
             }
         }
@@ -2287,11 +2777,21 @@ internal class CppExprAndStmtEmitter(
     private fun emitCallableRefExpr(refExpr: PacketFrame): String {
         val ch = FrameAstHelpers.childFrames(stream, refExpr)
         return if (ch.size >= 2) {
-            val lhs = FrameAstHelpers.frameSourceSlice(stream, ch[0]).trim()
+            val lhsFrame = ch[0]
+            val lhsType =
+                when (lhsFrame.nodeTypeId) {
+                    KtNodeTypes.TYPE_REFERENCE_ID,
+                    KtNodeTypes.USER_TYPE_ID,
+                    -> bundle.typeTranslator.translateTypeFrame(lhsFrame, CppTypePosition.TYPE_ARGUMENT)
+                    else -> {
+                        val simple = FrameAstHelpers.dottedNameText(stream, lhsFrame).substringAfterLast('.').ifEmpty { "void" }
+                        CppNamingPolicy.toTypeName(simple)
+                    }
+                }
             val rhs =
                 FrameAstHelpers.directIdentPacket(stream, ch[1])?.unescapedName
-                    ?: FrameAstHelpers.frameSourceSlice(stream, ch[1]).trim()
-            "&${CppNamingPolicy.toTypeName(lhs)}::${CppNamingPolicy.toSnakeCase(rhs)}"
+                    ?: FrameAstHelpers.operationSymbolName(stream, ch[1])
+            "&$lhsType::${CppNamingPolicy.toSnakeCase(rhs)}"
         } else {
             val sole = ch.lastOrNull()?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }.orEmpty()
             "&${CppNamingPolicy.toSnakeCase(sole)}"
@@ -2371,7 +2871,14 @@ internal class CppExprAndStmtEmitter(
                 val op = if (isPointerOrSharedPtrReceiver(prefFrame, prefCode)) "->" else "."
                 "$prefCode$op${aop.targetFieldInfo.cppName}"
             } else {
-                resolveBoundName(aop.targetFieldInfo.kotlinName) ?: aop.targetFieldInfo.cppName
+                val bound = resolveBoundName(aop.targetFieldInfo.kotlinName)
+                if (bound != null) {
+                    bound
+                } else {
+                    val ownerClsIdx = bundle.symbols.propertiesByFrame[aop.targetFieldInfo.propFrameIndex]?.enclosingClassFrameIndex
+                    val outerPrefix = resolveOuterChainPrefix(ownerClsIdx).orEmpty()
+                    "$outerPrefix${aop.targetFieldInfo.cppName}"
+                }
             }
         return if (aop.arrayIndexExprFrameIndex != null) {
             val idxCode = emitExpression(stream.frames[aop.arrayIndexExprFrameIndex])
@@ -2566,11 +3073,22 @@ internal class CppExprAndStmtEmitter(
         private val ASSIGN_OPS: Set<String> =
             setOf("=", "+=", "-=", "*=", "/=", "%=")
 
+        private val ELVIS_CONTROL_TRANSFER_NODE_TYPES: Set<Int> =
+            setOf(
+                KtNodeTypes.RETURN_ID,
+                KtNodeTypes.BREAK_ID,
+                KtNodeTypes.CONTINUE_ID,
+                KtNodeTypes.THROW_ID,
+            )
+
         private val STATEMENT_ONLY_NODE_TYPES: Set<Int> =
             setOf(
                 KtNodeTypes.PROPERTY_ID,
+                KtNodeTypes.FUN_ID,
                 KtNodeTypes.RETURN_ID,
                 KtNodeTypes.THROW_ID,
+                KtNodeTypes.BREAK_ID,
+                KtNodeTypes.CONTINUE_ID,
                 KtNodeTypes.FOR_ID,
                 KtNodeTypes.WHILE_ID,
                 KtNodeTypes.DO_WHILE_ID,

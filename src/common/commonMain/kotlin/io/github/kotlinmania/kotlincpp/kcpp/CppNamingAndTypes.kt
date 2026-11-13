@@ -216,6 +216,7 @@ internal class CppIncludeCollector(
 ) {
     private val systemHeaders = LinkedHashSet<String>()
     private val projectHeaders = LinkedHashSet<String>()
+    var needsCollectionAlias: Boolean = false
 
     fun addSystem(header: String) {
         systemHeaders.add(header.removeSurrounding("<", ">"))
@@ -237,6 +238,7 @@ internal enum class CppTypePosition {
     VALUE,
     RETURN,
     PARAMETER,
+    EXTENSION_RECEIVER,
     TYPE_ARGUMENT,
 }
 
@@ -277,16 +279,20 @@ internal class CppTypeTranslator(
             KtNodeTypes.TYPE_PROJECTION_ID -> {
                 val inner = FrameAstHelpers.firstChildFrame(stream, typeFrame, KtNodeTypes.TYPE_REFERENCE_ID)
                 if (inner != null) {
-                    translateTypeFrame(inner, CppTypePosition.TYPE_ARGUMENT, extraFlags)
+                    translateTypeFrame(inner, position, extraFlags)
                 } else {
                     // Star projection `*`
                     includes.addSystem("any")
                     "std::any"
                 }
             }
+            KtNodeTypes.INTERSECTION_TYPE_ID -> {
+                val first = FrameAstHelpers.childFrames(stream, typeFrame).firstOrNull()
+                if (first != null) translateTypeFrame(first, position, extraFlags) else "void"
+            }
             else -> {
-                val raw = FrameAstHelpers.frameSourceSlice(stream, typeFrame).trim()
-                if (raw.isEmpty()) "void" else CppNamingPolicy.toTypeName(raw)
+                val simple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, typeFrame)
+                if (simple.isNullOrEmpty()) "void" else CppNamingPolicy.toTypeName(simple)
             }
         }
     }
@@ -354,11 +360,12 @@ internal class CppTypeTranslator(
         val qualifiedParts = collectUserTypeSegments(userTypeFrame)
         val simpleName = qualifiedParts.lastOrNull() ?: "void"
         val typeArgsFrame = FrameAstHelpers.firstChildFrame(stream, userTypeFrame, KtNodeTypes.TYPE_ARGUMENT_LIST_ID)
+        val elemPosition = if (simpleName in VALUE_CONTAINER_TYPES) CppTypePosition.VALUE else CppTypePosition.TYPE_ARGUMENT
         val typeArgs =
             if (typeArgsFrame != null) {
                 FrameAstHelpers
                     .childFramesOfType(stream, typeArgsFrame, KtNodeTypes.TYPE_PROJECTION_ID)
-                    .map { translateTypeFrame(it, CppTypePosition.TYPE_ARGUMENT, PacketFlags.NONE) }
+                    .map { translateTypeFrame(it, elemPosition, PacketFlags.NONE) }
             } else {
                 emptyList()
             }
@@ -373,7 +380,7 @@ internal class CppTypeTranslator(
         // 2. Kotlin built-in scalars, strings, containers, and standard types
         when (simpleName) {
             "Unit" -> {
-                if (position == CppTypePosition.TYPE_ARGUMENT) {
+                if (position != CppTypePosition.RETURN) {
                     includes.addProject("kotlinx/coroutines/Unit.hpp")
                     return "Unit"
                 }
@@ -482,10 +489,18 @@ internal class CppTypeTranslator(
                 includes.addSystem("vector")
                 return "std::vector<char16_t>"
             }
+            "Collection" -> {
+                includes.addSystem("vector")
+                val elem = typeArgs.firstOrNull() ?: "std::any"
+                if (position == CppTypePosition.EXTENSION_RECEIVER) {
+                    includes.needsCollectionAlias = true
+                    return "Collection<$elem>"
+                }
+                return "std::vector<$elem>"
+            }
             "List",
             "MutableList",
             "ArrayList",
-            "Collection",
             "MutableCollection",
             "Array",
             -> {
@@ -586,7 +601,9 @@ internal class CppTypeTranslator(
             includes.addSystem("memory")
             return "std::shared_ptr<$parameterized>"
         }
-        if (simpleName in polymorphicTypeNames && position == CppTypePosition.PARAMETER) {
+        if (simpleName in polymorphicTypeNames &&
+            (position == CppTypePosition.PARAMETER || position == CppTypePosition.EXTENSION_RECEIVER)
+        ) {
             return "$parameterized&"
         }
         return parameterized
@@ -757,6 +774,26 @@ internal class CppTypeTranslator(
     }
 
     companion object {
+        val VALUE_CONTAINER_TYPES: Set<String> =
+            setOf(
+                "Collection",
+                "MutableCollection",
+                "List",
+                "MutableList",
+                "ArrayList",
+                "Array",
+                "Set",
+                "MutableSet",
+                "HashSet",
+                "LinkedHashSet",
+                "Map",
+                "MutableMap",
+                "HashMap",
+                "LinkedHashMap",
+                "Pair",
+                "Triple",
+            )
+
         val SHARED_HIERARCHY_TYPES: Set<String> =
             setOf(
                 "Continuation",

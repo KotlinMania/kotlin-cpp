@@ -180,8 +180,10 @@ internal object UniversalSynTokenAssociation {
                 is SyntaxPacket.OperatorPacket -> {
                     val synTok = associateOperator(pkt.operatorId, span)
                     pkt.synToken = synTok
-                    if (pkt.rawText.isNotEmpty() && pkt.rawText[0].isLetter()) {
+                    if (isValidProcMacroIdent(pkt.rawText)) {
                         pkt.procMacroToken = TokenTree.Ident(Ident.new(pkt.rawText, span))
+                    } else if (pkt.rawText == "as?") {
+                        pkt.procMacroToken = TokenTree.Ident(Ident.new("as", span))
                     } else if (pkt.rawText.length == 1) {
                         pkt.procMacroToken = TokenTree.Punct(Punct(pkt.rawText[0], Spacing.Alone, span))
                     }
