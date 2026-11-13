@@ -13,7 +13,7 @@ import io.github.kotlinmania.antlr4.atn.PredictionContextCache
 import io.github.kotlinmania.antlr4.dfa.DFA
 import io.github.kotlinmania.antlr4.misc.IntegerList
 
-internal class KotlinLexer(
+internal open class KotlinLexer(
     input: CharStream?,
 ) : Lexer(input) {
     init {

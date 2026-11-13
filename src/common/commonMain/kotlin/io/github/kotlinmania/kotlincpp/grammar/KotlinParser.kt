@@ -15,7 +15,7 @@ import io.github.kotlinmania.antlr4.dfa.DFA
 import io.github.kotlinmania.antlr4.misc.IntegerList
 import io.github.kotlinmania.antlr4.tree.TerminalNode
 
-internal class KotlinParser(
+internal open class KotlinParser(
     input: TokenStream?,
 ) : Parser(input) {
     init {
@@ -216,13 +216,12 @@ internal class KotlinParser(
         const val ErrorCharacter: Int = 173
     }
 
-    class KotlinFileContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class KotlinFileContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_KOTLIN_FILE
-            set(_) = Unit
+            set(_) {}
 
         fun packageHeader(): PackageHeaderContext? = getRuleContextOfType<PackageHeaderContext>(0)
 
@@ -298,13 +297,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ScriptContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ScriptContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SCRIPT
-            set(_) = Unit
+            set(_) {}
 
         fun packageHeader(): PackageHeaderContext? = getRuleContextOfType<PackageHeaderContext>(0)
 
@@ -388,13 +386,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ShebangLineContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ShebangLineContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SHEBANG_LINE
-            set(_) = Unit
+            set(_) {}
 
         fun ShebangLine(): TerminalNode? = getToken(Tokens.ShebangLine, 0)
 
@@ -420,7 +417,9 @@ internal class KotlinParser(
                             state = 403
                             match(Tokens.NL)
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 406
                     altChoice = adaptivePredict(8)
@@ -432,13 +431,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FileAnnotationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FileAnnotationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FILE_ANNOTATION
-            set(_) = Unit
+            set(_) {}
 
         fun FILE(): TerminalNode? = getToken(Tokens.FILE, 0)
 
@@ -536,13 +534,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PackageHeaderContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PackageHeaderContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PACKAGE_HEADER
-            set(_) = Unit
+            set(_) {}
 
         fun PACKAGE(): TerminalNode? = getToken(Tokens.PACKAGE, 0)
 
@@ -582,13 +579,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ImportListContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ImportListContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IMPORT_LIST
-            set(_) = Unit
+            set(_) {}
 
         fun importHeader(): List<ImportHeaderContext> = getRuleContextsOfType<ImportHeaderContext>()
 
@@ -619,13 +615,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ImportHeaderContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ImportHeaderContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IMPORT_HEADER
-            set(_) = Unit
+            set(_) {}
 
         fun IMPORT(): TerminalNode? = getToken(Tokens.IMPORT, 0)
 
@@ -680,13 +675,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ImportAliasContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ImportAliasContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IMPORT_ALIAS
-            set(_) = Unit
+            set(_) {}
 
         fun AS(): TerminalNode? = getToken(Tokens.AS, 0)
 
@@ -710,13 +704,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TopLevelObjectContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TopLevelObjectContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TOP_LEVEL_OBJECT
-            set(_) = Unit
+            set(_) {}
 
         fun declaration(): DeclarationContext? = getRuleContextOfType<DeclarationContext>(0)
 
@@ -745,13 +738,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeAliasContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeAliasContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_ALIAS
-            set(_) = Unit
+            set(_) {}
 
         fun TYPE_ALIAS(): TerminalNode? = getToken(Tokens.TYPE_ALIAS, 0)
 
@@ -839,13 +831,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun classDeclaration(): ClassDeclarationContext? = getRuleContextOfType<ClassDeclarationContext>(0)
 
@@ -901,13 +892,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -1099,13 +1089,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PrimaryConstructorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PrimaryConstructorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PRIMARY_CONSTRUCTOR
-            set(_) = Unit
+            set(_) {}
 
         fun classParameters(): ClassParametersContext? = getRuleContextOfType<ClassParametersContext>(0)
 
@@ -1154,13 +1143,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassBodyContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassBodyContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_BODY
-            set(_) = Unit
+            set(_) {}
 
         fun LCURL(): TerminalNode? = getToken(Tokens.LCURL, 0)
 
@@ -1212,13 +1200,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassParametersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassParametersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_PARAMETERS
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -1328,13 +1315,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassParameterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassParameterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_PARAMETER
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -1443,13 +1429,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DelegationSpecifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DelegationSpecifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DELEGATION_SPECIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun annotatedDelegationSpecifier(): List<AnnotatedDelegationSpecifierContext> = getRuleContextsOfType<AnnotatedDelegationSpecifierContext>()
 
@@ -1511,13 +1496,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DelegationSpecifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DelegationSpecifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DELEGATION_SPECIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun constructorInvocation(): ConstructorInvocationContext? = getRuleContextOfType<ConstructorInvocationContext>(0)
 
@@ -1588,13 +1572,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ConstructorInvocationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ConstructorInvocationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CONSTRUCTOR_INVOCATION
-            set(_) = Unit
+            set(_) {}
 
         fun userType(): UserTypeContext? = getRuleContextOfType<UserTypeContext>(0)
 
@@ -1631,13 +1614,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnnotatedDelegationSpecifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnnotatedDelegationSpecifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANNOTATED_DELEGATION_SPECIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun delegationSpecifier(): DelegationSpecifierContext? = getRuleContextOfType<DelegationSpecifierContext>(0)
 
@@ -1685,13 +1667,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ExplicitDelegationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ExplicitDelegationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_EXPLICIT_DELEGATION
-            set(_) = Unit
+            set(_) {}
 
         fun BY(): TerminalNode? = getToken(Tokens.BY, 0)
 
@@ -1756,13 +1737,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeParametersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeParametersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PARAMETERS
-            set(_) = Unit
+            set(_) {}
 
         fun LANGLE(): TerminalNode? = getToken(Tokens.LANGLE, 0)
 
@@ -1866,13 +1846,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeParameterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeParameterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PARAMETER
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -1946,13 +1925,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeConstraintsContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeConstraintsContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_CONSTRAINTS
-            set(_) = Unit
+            set(_) {}
 
         fun WHERE(): TerminalNode? = getToken(Tokens.WHERE, 0)
 
@@ -2024,13 +2002,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeConstraintContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeConstraintContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_CONSTRAINT
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -2091,13 +2068,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassMemberDeclarationsContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassMemberDeclarationsContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_MEMBER_DECLARATIONS
-            set(_) = Unit
+            set(_) {}
 
         fun classMemberDeclaration(): List<ClassMemberDeclarationContext> = getRuleContextsOfType<ClassMemberDeclarationContext>()
 
@@ -2139,13 +2115,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassMemberDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassMemberDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_MEMBER_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun declaration(): DeclarationContext? = getRuleContextOfType<DeclarationContext>(0)
 
@@ -2194,13 +2169,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnonymousInitializerContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnonymousInitializerContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANONYMOUS_INITIALIZER
-            set(_) = Unit
+            set(_) {}
 
         fun INIT(): TerminalNode? = getToken(Tokens.INIT, 0)
 
@@ -2237,13 +2211,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class CompanionObjectContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class CompanionObjectContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_COMPANION_OBJECT
-            set(_) = Unit
+            set(_) {}
 
         fun COMPANION(): TerminalNode? = getToken(Tokens.COMPANION, 0)
 
@@ -2375,13 +2348,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionValueParametersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionValueParametersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_VALUE_PARAMETERS
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -2487,13 +2459,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionValueParameterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionValueParameterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_VALUE_PARAMETER
-            set(_) = Unit
+            set(_) {}
 
         fun parameter(): ParameterContext? = getRuleContextOfType<ParameterContext>(0)
 
@@ -2561,13 +2532,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun FUN(): TerminalNode? = getToken(Tokens.FUN, 0)
 
@@ -2739,13 +2709,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionBodyContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionBodyContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_BODY
-            set(_) = Unit
+            set(_) {}
 
         fun block(): BlockContext? = getRuleContextOfType<BlockContext>(0)
 
@@ -2797,13 +2766,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class VariableDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class VariableDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_VARIABLE_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -2879,13 +2847,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiVariableDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiVariableDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTI_VARIABLE_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -2989,13 +2956,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PropertyDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PropertyDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PROPERTY_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun VAL(): TerminalNode? = getToken(Tokens.VAL, 0)
 
@@ -3281,13 +3247,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PropertyDelegateContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PropertyDelegateContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PROPERTY_DELEGATE
-            set(_) = Unit
+            set(_) {}
 
         fun BY(): TerminalNode? = getToken(Tokens.BY, 0)
 
@@ -3326,13 +3291,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class GetterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class GetterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_GETTER
-            set(_) = Unit
+            set(_) {}
 
         fun GET(): TerminalNode? = getToken(Tokens.GET, 0)
 
@@ -3438,13 +3402,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SetterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SetterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SETTER
-            set(_) = Unit
+            set(_) {}
 
         fun SET(): TerminalNode? = getToken(Tokens.SET, 0)
 
@@ -3580,13 +3543,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParametersWithOptionalTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParametersWithOptionalTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARAMETERS_WITH_OPTIONAL_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -3692,13 +3654,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionValueParameterWithOptionalTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionValueParameterWithOptionalTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_VALUE_PARAMETER_WITH_OPTIONAL_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun parameterWithOptionalType(): ParameterWithOptionalTypeContext? = getRuleContextOfType<ParameterWithOptionalTypeContext>(0)
 
@@ -3766,13 +3727,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParameterWithOptionalTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParameterWithOptionalTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARAMETER_WITH_OPTIONAL_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -3828,13 +3788,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParameterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParameterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARAMETER
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -3883,13 +3842,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ObjectDeclarationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ObjectDeclarationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_OBJECT_DECLARATION
-            set(_) = Unit
+            set(_) {}
 
         fun OBJECT(): TerminalNode? = getToken(Tokens.OBJECT, 0)
 
@@ -3985,13 +3943,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SecondaryConstructorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SecondaryConstructorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SECONDARY_CONSTRUCTOR
-            set(_) = Unit
+            set(_) {}
 
         fun CONSTRUCTOR(): TerminalNode? = getToken(Tokens.CONSTRUCTOR, 0)
 
@@ -4085,13 +4042,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ConstructorDelegationCallContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ConstructorDelegationCallContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CONSTRUCTOR_DELEGATION_CALL
-            set(_) = Unit
+            set(_) {}
 
         fun valueArguments(): ValueArgumentsContext? = getRuleContextOfType<ValueArgumentsContext>(0)
 
@@ -4137,13 +4093,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class EnumClassBodyContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class EnumClassBodyContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ENUM_CLASS_BODY
-            set(_) = Unit
+            set(_) {}
 
         fun LCURL(): TerminalNode? = getToken(Tokens.LCURL, 0)
 
@@ -4231,13 +4186,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class EnumEntriesContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class EnumEntriesContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ENUM_ENTRIES
-            set(_) = Unit
+            set(_) {}
 
         fun enumEntry(): List<EnumEntryContext> = getRuleContextsOfType<EnumEntryContext>()
 
@@ -4313,13 +4267,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class EnumEntryContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class EnumEntryContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ENUM_ENTRY
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -4399,13 +4352,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun functionType(): FunctionTypeContext? = getRuleContextOfType<FunctionTypeContext>(0)
 
@@ -4467,13 +4419,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeReferenceContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeReferenceContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_REFERENCE
-            set(_) = Unit
+            set(_) {}
 
         fun userType(): UserTypeContext? = getRuleContextOfType<UserTypeContext>(0)
 
@@ -4508,13 +4459,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class NullableTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class NullableTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_NULLABLE_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun typeReference(): TypeReferenceContext? = getRuleContextOfType<TypeReferenceContext>(0)
 
@@ -4565,7 +4515,9 @@ internal class KotlinParser(
                             state = 1730
                             quest()
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 1733
                     altChoice = adaptivePredict(250)
@@ -4577,13 +4529,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class QuestContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class QuestContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_QUEST
-            set(_) = Unit
+            set(_) {}
 
         fun QUEST_NO_WS(): TerminalNode? = getToken(Tokens.QUEST_NO_WS, 0)
 
@@ -4613,13 +4564,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class UserTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class UserTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_USER_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun simpleUserType(): List<SimpleUserTypeContext> = getRuleContextsOfType<SimpleUserTypeContext>()
 
@@ -4679,13 +4629,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SimpleUserTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SimpleUserTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SIMPLE_USER_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -4729,13 +4678,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeProjectionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeProjectionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PROJECTION
-            set(_) = Unit
+            set(_) {}
 
         fun `type`(): TypeContext? = getRuleContextOfType<TypeContext>(0)
 
@@ -4779,13 +4727,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeProjectionModifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeProjectionModifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PROJECTION_MODIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun typeProjectionModifier(): List<TypeProjectionModifierContext> = getRuleContextsOfType<TypeProjectionModifierContext>()
 
@@ -4807,7 +4754,9 @@ internal class KotlinParser(
                             state = 1774
                             typeProjectionModifier()
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 1777
                     altChoice = adaptivePredict(258)
@@ -4819,13 +4768,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeProjectionModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeProjectionModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PROJECTION_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun varianceModifier(): VarianceModifierContext? = getRuleContextOfType<VarianceModifierContext>(0)
 
@@ -4871,13 +4819,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun functionTypeParameters(): FunctionTypeParametersContext? = getRuleContextOfType<FunctionTypeParametersContext>(0)
 
@@ -4957,13 +4904,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionTypeParametersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionTypeParametersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_TYPE_PARAMETERS
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -5090,13 +5036,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParenthesizedTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParenthesizedTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARENTHESIZED_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -5145,13 +5090,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ReceiverTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ReceiverTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_RECEIVER_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun parenthesizedType(): ParenthesizedTypeContext? = getRuleContextOfType<ParenthesizedTypeContext>(0)
 
@@ -5201,13 +5145,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParenthesizedUserTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParenthesizedUserTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARENTHESIZED_USER_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -5268,13 +5211,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DefinitelyNonNullableTypeContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DefinitelyNonNullableTypeContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DEFINITELY_NON_NULLABLE_TYPE
-            set(_) = Unit
+            set(_) {}
 
         fun AMP(): TerminalNode? = getToken(Tokens.AMP, 0)
 
@@ -5368,13 +5310,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class StatementsContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class StatementsContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_STATEMENTS
-            set(_) = Unit
+            set(_) {}
 
         fun statement(): List<StatementContext> = getRuleContextsOfType<StatementContext>()
 
@@ -5427,13 +5368,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class StatementContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class StatementContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_STATEMENT
-            set(_) = Unit
+            set(_) {}
 
         fun declaration(): DeclarationContext? = getRuleContextOfType<DeclarationContext>(0)
 
@@ -5464,12 +5404,12 @@ internal class KotlinParser(
                 while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
                     if (altChoice == 1) {
                         state = 1957
-                        when (adaptivePredict(291)) {
-                            1 -> {
+                        when (tokenStream.LA(1)) {
+                            Tokens.FILE, Tokens.FIELD, Tokens.PROPERTY, Tokens.GET, Tokens.SET, Tokens.RECEIVER, Tokens.PARAM, Tokens.SETPARAM, Tokens.DELEGATE, Tokens.IMPORT, Tokens.CONSTRUCTOR, Tokens.BY, Tokens.COMPANION, Tokens.INIT, Tokens.WHERE, Tokens.CATCH, Tokens.FINALLY, Tokens.OUT, Tokens.DYNAMIC, Tokens.PUBLIC, Tokens.PRIVATE, Tokens.PROTECTED, Tokens.INTERNAL, Tokens.ENUM, Tokens.SEALED, Tokens.ANNOTATION, Tokens.DATA, Tokens.INNER, Tokens.VALUE, Tokens.TAILREC, Tokens.OPERATOR, Tokens.INLINE, Tokens.INFIX, Tokens.EXTERNAL, Tokens.SUSPEND, Tokens.OVERRIDE, Tokens.ABSTRACT, Tokens.FINAL, Tokens.OPEN, Tokens.CONST, Tokens.LATEINIT, Tokens.VARARG, Tokens.NOINLINE, Tokens.CROSSINLINE, Tokens.REIFIED, Tokens.EXPECT, Tokens.ACTUAL, Tokens.Identifier -> {
                                 state = 1955
                                 label()
                             }
-                            2 -> {
+                            Tokens.AT_NO_WS, Tokens.AT_PRE_WS -> {
                                 state = 1956
                                 annotation()
                             }
@@ -5507,13 +5447,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LabelContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LabelContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LABEL
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): SimpleIdentifierContext? = getRuleContextOfType<SimpleIdentifierContext>(0)
 
@@ -5562,13 +5501,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ControlStructureBodyContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ControlStructureBodyContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CONTROL_STRUCTURE_BODY
-            set(_) = Unit
+            set(_) {}
 
         fun block(): BlockContext? = getRuleContextOfType<BlockContext>(0)
 
@@ -5603,13 +5541,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class BlockContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class BlockContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_BLOCK
-            set(_) = Unit
+            set(_) {}
 
         fun LCURL(): TerminalNode? = getToken(Tokens.LCURL, 0)
 
@@ -5661,13 +5598,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LoopStatementContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LoopStatementContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LOOP_STATEMENT
-            set(_) = Unit
+            set(_) {}
 
         fun forStatement(): ForStatementContext? = getRuleContextOfType<ForStatementContext>(0)
 
@@ -5707,13 +5643,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ForStatementContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ForStatementContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FOR_STATEMENT
-            set(_) = Unit
+            set(_) {}
 
         fun FOR(): TerminalNode? = getToken(Tokens.FOR, 0)
 
@@ -5813,13 +5748,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhileStatementContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhileStatementContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHILE_STATEMENT
-            set(_) = Unit
+            set(_) {}
 
         fun WHILE(): TerminalNode? = getToken(Tokens.WHILE, 0)
 
@@ -5891,13 +5825,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DoWhileStatementContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DoWhileStatementContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DO_WHILE_STATEMENT
-            set(_) = Unit
+            set(_) {}
 
         fun DO(): TerminalNode? = getToken(Tokens.DO, 0)
 
@@ -5975,13 +5908,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AssignmentContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AssignmentContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ASSIGNMENT
-            set(_) = Unit
+            set(_) {}
 
         fun expression(): ExpressionContext? = getRuleContextOfType<ExpressionContext>(0)
 
@@ -6041,13 +5973,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SemiContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SemiContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SEMI
-            set(_) = Unit
+            set(_) {}
 
         fun SEMICOLON(): TerminalNode? = getToken(Tokens.SEMICOLON, 0)
 
@@ -6090,13 +6021,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SemisContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SemisContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SEMIS
-            set(_) = Unit
+            set(_) {}
 
         fun SEMICOLON(): List<TerminalNode> = getTokens(Tokens.SEMICOLON)
 
@@ -6130,7 +6060,9 @@ internal class KotlinParser(
                                 consume()
                             }
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 2104
                     altChoice = adaptivePredict(314)
@@ -6142,13 +6074,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun disjunction(): DisjunctionContext? = getRuleContextOfType<DisjunctionContext>(0)
     }
@@ -6168,13 +6099,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DisjunctionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DisjunctionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DISJUNCTION
-            set(_) = Unit
+            set(_) {}
 
         fun conjunction(): List<ConjunctionContext> = getRuleContextsOfType<ConjunctionContext>()
 
@@ -6236,13 +6166,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ConjunctionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ConjunctionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CONJUNCTION
-            set(_) = Unit
+            set(_) {}
 
         fun equality(): List<EqualityContext> = getRuleContextsOfType<EqualityContext>()
 
@@ -6304,13 +6233,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class EqualityContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class EqualityContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_EQUALITY
-            set(_) = Unit
+            set(_) {}
 
         fun comparison(): List<ComparisonContext> = getRuleContextsOfType<ComparisonContext>()
 
@@ -6363,13 +6291,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ComparisonContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ComparisonContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_COMPARISON
-            set(_) = Unit
+            set(_) {}
 
         fun genericCallLikeComparison(): List<GenericCallLikeComparisonContext> = getRuleContextsOfType<GenericCallLikeComparisonContext>()
 
@@ -6422,13 +6349,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class GenericCallLikeComparisonContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class GenericCallLikeComparisonContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_GENERIC_CALL_LIKE_COMPARISON
-            set(_) = Unit
+            set(_) {}
 
         fun infixOperation(): InfixOperationContext? = getRuleContextOfType<InfixOperationContext>(0)
 
@@ -6463,13 +6389,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class InfixOperationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class InfixOperationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_INFIX_OPERATION
-            set(_) = Unit
+            set(_) {}
 
         fun elvisExpression(): List<ElvisExpressionContext> = getRuleContextsOfType<ElvisExpressionContext>()
 
@@ -6507,8 +6432,8 @@ internal class KotlinParser(
                 while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
                     if (altChoice == 1) {
                         state = 2204
-                        when (adaptivePredict(328)) {
-                            1 -> {
+                        when (tokenStream.LA(1)) {
+                            Tokens.IN, Tokens.NOT_IN -> {
                                 state = 2186
                                 inOperator()
                                 state = 2190
@@ -6524,7 +6449,7 @@ internal class KotlinParser(
                                 state = 2193
                                 elvisExpression()
                             }
-                            2 -> {
+                            Tokens.IS, Tokens.NOT_IS -> {
                                 state = 2195
                                 isOperator()
                                 state = 2199
@@ -6551,13 +6476,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ElvisExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ElvisExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ELVIS_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun infixFunctionCall(): List<InfixFunctionCallContext> = getRuleContextsOfType<InfixFunctionCallContext>()
 
@@ -6619,13 +6543,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ElvisContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ElvisContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ELVIS
-            set(_) = Unit
+            set(_) {}
 
         fun QUEST_NO_WS(): TerminalNode? = getToken(Tokens.QUEST_NO_WS, 0)
 
@@ -6649,13 +6572,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class InfixFunctionCallContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class InfixFunctionCallContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_INFIX_FUNCTION_CALL
-            set(_) = Unit
+            set(_) {}
 
         fun rangeExpression(): List<RangeExpressionContext> = getRuleContextsOfType<RangeExpressionContext>()
 
@@ -6708,13 +6630,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class RangeExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class RangeExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_RANGE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun additiveExpression(): List<AdditiveExpressionContext> = getRuleContextsOfType<AdditiveExpressionContext>()
 
@@ -6779,13 +6700,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AdditiveExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AdditiveExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ADDITIVE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun multiplicativeExpression(): List<MultiplicativeExpressionContext> = getRuleContextsOfType<MultiplicativeExpressionContext>()
 
@@ -6838,13 +6758,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiplicativeExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiplicativeExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTIPLICATIVE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun asExpression(): List<AsExpressionContext> = getRuleContextsOfType<AsExpressionContext>()
 
@@ -6897,13 +6816,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AsExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AsExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_AS_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun prefixUnaryExpression(): PrefixUnaryExpressionContext? = getRuleContextOfType<PrefixUnaryExpressionContext>(0)
 
@@ -6965,13 +6883,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PrefixUnaryExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PrefixUnaryExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PREFIX_UNARY_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun postfixUnaryExpression(): PostfixUnaryExpressionContext? = getRuleContextOfType<PostfixUnaryExpressionContext>(0)
 
@@ -7006,13 +6923,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class UnaryPrefixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class UnaryPrefixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_UNARY_PREFIX
-            set(_) = Unit
+            set(_) {}
 
         fun annotation(): AnnotationContext? = getRuleContextOfType<AnnotationContext>(0)
 
@@ -7067,13 +6983,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PostfixUnaryExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PostfixUnaryExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_POSTFIX_UNARY_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun primaryExpression(): PrimaryExpressionContext? = getRuleContextOfType<PrimaryExpressionContext>(0)
 
@@ -7108,13 +7023,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PostfixUnarySuffixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PostfixUnarySuffixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_POSTFIX_UNARY_SUFFIX
-            set(_) = Unit
+            set(_) {}
 
         fun postfixUnaryOperator(): PostfixUnaryOperatorContext? = getRuleContextOfType<PostfixUnaryOperatorContext>(0)
 
@@ -7170,13 +7084,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class DirectlyAssignableExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class DirectlyAssignableExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_DIRECTLY_ASSIGNABLE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun postfixUnaryExpression(): PostfixUnaryExpressionContext? = getRuleContextOfType<PostfixUnaryExpressionContext>(0)
 
@@ -7222,13 +7135,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParenthesizedDirectlyAssignableExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParenthesizedDirectlyAssignableExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARENTHESIZED_DIRECTLY_ASSIGNABLE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -7280,13 +7192,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AssignableExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AssignableExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ASSIGNABLE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun prefixUnaryExpression(): PrefixUnaryExpressionContext? = getRuleContextOfType<PrefixUnaryExpressionContext>(0)
 
@@ -7321,13 +7232,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParenthesizedAssignableExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParenthesizedAssignableExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARENTHESIZED_ASSIGNABLE_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -7379,13 +7289,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AssignableSuffixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AssignableSuffixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ASSIGNABLE_SUFFIX
-            set(_) = Unit
+            set(_) {}
 
         fun typeArguments(): TypeArgumentsContext? = getRuleContextOfType<TypeArgumentsContext>(0)
 
@@ -7425,13 +7334,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class IndexingSuffixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class IndexingSuffixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_INDEXING_SUFFIX
-            set(_) = Unit
+            set(_) {}
 
         fun LSQUARE(): TerminalNode? = getToken(Tokens.LSQUARE, 0)
 
@@ -7535,13 +7443,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class NavigationSuffixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class NavigationSuffixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_NAVIGATION_SUFFIX
-            set(_) = Unit
+            set(_) {}
 
         fun memberAccessOperator(): MemberAccessOperatorContext? = getRuleContextOfType<MemberAccessOperatorContext>(0)
 
@@ -7596,13 +7503,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class CallSuffixContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class CallSuffixContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CALL_SUFFIX
-            set(_) = Unit
+            set(_) {}
 
         fun annotatedLambda(): AnnotatedLambdaContext? = getRuleContextOfType<AnnotatedLambdaContext>(0)
 
@@ -7651,13 +7557,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnnotatedLambdaContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnnotatedLambdaContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANNOTATED_LAMBDA
-            set(_) = Unit
+            set(_) {}
 
         fun lambdaLiteral(): LambdaLiteralContext? = getRuleContextOfType<LambdaLiteralContext>(0)
 
@@ -7710,13 +7615,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeArgumentsContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeArgumentsContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_ARGUMENTS
-            set(_) = Unit
+            set(_) {}
 
         fun LANGLE(): TerminalNode? = getToken(Tokens.LANGLE, 0)
 
@@ -7816,13 +7720,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ValueArgumentsContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ValueArgumentsContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_VALUE_ARGUMENTS
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -7930,13 +7833,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ValueArgumentContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ValueArgumentContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_VALUE_ARGUMENT
-            set(_) = Unit
+            set(_) {}
 
         fun expression(): ExpressionContext? = getRuleContextOfType<ExpressionContext>(0)
 
@@ -8032,13 +7934,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PrimaryExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PrimaryExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PRIMARY_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun parenthesizedExpression(): ParenthesizedExpressionContext? = getRuleContextOfType<ParenthesizedExpressionContext>(0)
 
@@ -8157,13 +8058,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParenthesizedExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParenthesizedExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARENTHESIZED_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -8215,13 +8115,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class CollectionLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class CollectionLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_COLLECTION_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun LSQUARE(): TerminalNode? = getToken(Tokens.LSQUARE, 0)
 
@@ -8329,13 +8228,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LiteralConstantContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LiteralConstantContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LITERAL_CONSTANT
-            set(_) = Unit
+            set(_) {}
 
         fun BooleanLiteral(): TerminalNode? = getToken(Tokens.BooleanLiteral, 0)
 
@@ -8379,13 +8277,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class StringLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class StringLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_STRING_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun lineStringLiteral(): LineStringLiteralContext? = getRuleContextOfType<LineStringLiteralContext>(0)
 
@@ -8418,13 +8315,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LineStringLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LineStringLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LINE_STRING_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun QUOTE_OPEN(): TerminalNode? = getToken(Tokens.QUOTE_OPEN, 0)
 
@@ -8442,31 +8338,29 @@ internal class KotlinParser(
     fun lineStringLiteral(): LineStringLiteralContext {
         val localCtx = LineStringLiteralContext(ctx, state)
         enterRule(localCtx, 222, RULE_LINE_STRING_LITERAL)
+        var laToken: Int
         try {
-            var altChoice: Int
             executeRuleGuarded(localCtx) {
                 enterOuterAlt(localCtx, 1)
                 state = 2687
                 match(Tokens.QUOTE_OPEN)
                 state = 2692
-                altChoice = adaptivePredict(406)
-                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    if (altChoice == 1) {
-                        state = 2690
-                        when (adaptivePredict(405)) {
-                            1 -> {
-                                state = 2688
-                                lineStringContent()
-                            }
-                            2 -> {
-                                state = 2689
-                                lineStringExpression()
-                            }
-                            else -> throwNoViableAlt()
+                laToken = tokenStream.LA(1)
+                while (laToken == Tokens.LineStrRef || laToken == Tokens.LineStrText || laToken == Tokens.LineStrEscapedChar || laToken == Tokens.LineStrExprStart) {
+                    state = 2690
+                    when (tokenStream.LA(1)) {
+                        Tokens.LineStrRef, Tokens.LineStrText, Tokens.LineStrEscapedChar -> {
+                            state = 2688
+                            lineStringContent()
                         }
+                        Tokens.LineStrExprStart -> {
+                            state = 2689
+                            lineStringExpression()
+                        }
+                        else -> throwNoViableAlt()
                     }
                     state = 2694
-                    altChoice = adaptivePredict(406)
+                    laToken = tokenStream.LA(1)
                 }
                 state = 2695
                 match(Tokens.QUOTE_CLOSE)
@@ -8477,13 +8371,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiLineStringLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiLineStringLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTI_LINE_STRING_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun TRIPLE_QUOTE_OPEN(): TerminalNode? = getToken(Tokens.TRIPLE_QUOTE_OPEN, 0)
 
@@ -8505,6 +8398,7 @@ internal class KotlinParser(
     fun multiLineStringLiteral(): MultiLineStringLiteralContext {
         val localCtx = MultiLineStringLiteralContext(ctx, state)
         enterRule(localCtx, 224, RULE_MULTI_LINE_STRING_LITERAL)
+        var laToken: Int
         try {
             var altChoice: Int
             executeRuleGuarded(localCtx) {
@@ -8512,28 +8406,27 @@ internal class KotlinParser(
                 state = 2697
                 match(Tokens.TRIPLE_QUOTE_OPEN)
                 state = 2703
-                altChoice = adaptivePredict(408)
-                while (altChoice != 2 && altChoice != ATN.INVALID_ALT_NUMBER) {
-                    if (altChoice == 1) {
-                        state = 2701
-                        when (adaptivePredict(407)) {
-                            1 -> {
-                                state = 2698
-                                multiLineStringContent()
-                            }
-                            2 -> {
-                                state = 2699
-                                multiLineStringExpression()
-                            }
-                            3 -> {
-                                state = 2700
-                                match(Tokens.MultiLineStringQuote)
-                            }
-                            else -> throwNoViableAlt()
+                laToken = tokenStream.LA(1)
+                while (laToken == Tokens.MultiLineStringQuote || laToken == Tokens.MultiLineStrRef || laToken == Tokens.MultiLineStrText || laToken == Tokens.MultiLineStrExprStart) {
+                    state = 2701
+                    altChoice = adaptivePredict(407)
+                    when (altChoice) {
+                        1 -> {
+                            state = 2698
+                            multiLineStringContent()
                         }
+                        2 -> {
+                            state = 2699
+                            multiLineStringExpression()
+                        }
+                        3 -> {
+                            state = 2700
+                            match(Tokens.MultiLineStringQuote)
+                        }
+                        else -> throwNoViableAlt()
                     }
                     state = 2705
-                    altChoice = adaptivePredict(408)
+                    laToken = tokenStream.LA(1)
                 }
                 state = 2706
                 match(Tokens.TRIPLE_QUOTE_CLOSE)
@@ -8544,13 +8437,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LineStringContentContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LineStringContentContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LINE_STRING_CONTENT
-            set(_) = Unit
+            set(_) {}
 
         fun LineStrText(): TerminalNode? = getToken(Tokens.LineStrText, 0)
 
@@ -8582,13 +8474,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LineStringExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LineStringExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LINE_STRING_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun LineStrExprStart(): TerminalNode? = getToken(Tokens.LineStrExprStart, 0)
 
@@ -8640,13 +8531,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiLineStringContentContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiLineStringContentContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTI_LINE_STRING_CONTENT
-            set(_) = Unit
+            set(_) {}
 
         fun MultiLineStrText(): TerminalNode? = getToken(Tokens.MultiLineStrText, 0)
 
@@ -8678,13 +8568,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiLineStringExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiLineStringExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTI_LINE_STRING_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun MultiLineStrExprStart(): TerminalNode? = getToken(Tokens.MultiLineStrExprStart, 0)
 
@@ -8736,13 +8625,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LambdaLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LambdaLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LAMBDA_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun LCURL(): TerminalNode? = getToken(Tokens.LCURL, 0)
 
@@ -8832,13 +8720,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LambdaParametersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LambdaParametersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LAMBDA_PARAMETERS
-            set(_) = Unit
+            set(_) {}
 
         fun lambdaParameter(): List<LambdaParameterContext> = getRuleContextsOfType<LambdaParameterContext>()
 
@@ -8916,13 +8803,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class LambdaParameterContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class LambdaParameterContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_LAMBDA_PARAMETER
-            set(_) = Unit
+            set(_) {}
 
         fun variableDeclaration(): VariableDeclarationContext? = getRuleContextOfType<VariableDeclarationContext>(0)
 
@@ -8991,13 +8877,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnonymousFunctionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnonymousFunctionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANONYMOUS_FUNCTION
-            set(_) = Unit
+            set(_) {}
 
         fun FUN(): TerminalNode? = getToken(Tokens.FUN, 0)
 
@@ -9147,13 +9032,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun lambdaLiteral(): LambdaLiteralContext? = getRuleContextOfType<LambdaLiteralContext>(0)
 
@@ -9186,13 +9070,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ObjectLiteralContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ObjectLiteralContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_OBJECT_LITERAL
-            set(_) = Unit
+            set(_) {}
 
         fun OBJECT(): TerminalNode? = getToken(Tokens.OBJECT, 0)
 
@@ -9294,13 +9177,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ThisExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ThisExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_THIS_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun THIS(): TerminalNode? = getToken(Tokens.THIS, 0)
 
@@ -9330,13 +9212,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SuperExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SuperExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SUPER_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun SUPER(): TerminalNode? = getToken(Tokens.SUPER, 0)
 
@@ -9423,13 +9304,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class IfExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class IfExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IF_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun IF(): TerminalNode? = getToken(Tokens.IF, 0)
 
@@ -9584,13 +9464,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhenSubjectContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhenSubjectContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHEN_SUBJECT
-            set(_) = Unit
+            set(_) {}
 
         fun LPAREN(): TerminalNode? = getToken(Tokens.LPAREN, 0)
 
@@ -9690,13 +9569,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhenExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhenExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHEN_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun WHEN(): TerminalNode? = getToken(Tokens.WHEN, 0)
 
@@ -9798,13 +9676,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhenEntryContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhenEntryContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHEN_ENTRY
-            set(_) = Unit
+            set(_) {}
 
         fun whenCondition(): List<WhenConditionContext> = getRuleContextsOfType<WhenConditionContext>()
 
@@ -9995,13 +9872,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhenEntryGuardContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhenEntryGuardContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHEN_ENTRY_GUARD
-            set(_) = Unit
+            set(_) {}
 
         fun IF(): TerminalNode? = getToken(Tokens.IF, 0)
 
@@ -10040,13 +9916,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class WhenConditionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class WhenConditionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_WHEN_CONDITION
-            set(_) = Unit
+            set(_) {}
 
         fun expression(): ExpressionContext? = getRuleContextOfType<ExpressionContext>(0)
 
@@ -10086,13 +9961,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class RangeTestContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class RangeTestContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_RANGE_TEST
-            set(_) = Unit
+            set(_) {}
 
         fun inOperator(): InOperatorContext? = getRuleContextOfType<InOperatorContext>(0)
 
@@ -10131,13 +10005,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeTestContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeTestContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_TEST
-            set(_) = Unit
+            set(_) {}
 
         fun isOperator(): IsOperatorContext? = getRuleContextOfType<IsOperatorContext>(0)
 
@@ -10174,13 +10047,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TryExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TryExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TRY_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun TRY(): TerminalNode? = getToken(Tokens.TRY, 0)
 
@@ -10237,7 +10109,9 @@ internal class KotlinParser(
                                     state = 3241
                                     catchBlock()
                                 }
-                                else -> throwNoViableAlt()
+                                else -> {
+                                    throwNoViableAlt()
+                                }
                             }
                             state = 3244
                             altChoice = adaptivePredict(501)
@@ -10280,13 +10154,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class CatchBlockContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class CatchBlockContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CATCH_BLOCK
-            set(_) = Unit
+            set(_) {}
 
         fun CATCH(): TerminalNode? = getToken(Tokens.CATCH, 0)
 
@@ -10379,13 +10252,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FinallyBlockContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FinallyBlockContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FINALLY_BLOCK
-            set(_) = Unit
+            set(_) {}
 
         fun FINALLY(): TerminalNode? = getToken(Tokens.FINALLY, 0)
 
@@ -10422,13 +10294,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class JumpExpressionContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class JumpExpressionContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_JUMP_EXPRESSION
-            set(_) = Unit
+            set(_) {}
 
         fun THROW(): TerminalNode? = getToken(Tokens.THROW, 0)
 
@@ -10526,13 +10397,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class CallableReferenceContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class CallableReferenceContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CALLABLE_REFERENCE
-            set(_) = Unit
+            set(_) {}
 
         fun COLONCOLON(): TerminalNode? = getToken(Tokens.COLONCOLON, 0)
 
@@ -10589,13 +10459,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AssignmentAndOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AssignmentAndOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ASSIGNMENT_AND_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun ADD_ASSIGNMENT(): TerminalNode? = getToken(Tokens.ADD_ASSIGNMENT, 0)
 
@@ -10631,13 +10500,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class EqualityOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class EqualityOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_EQUALITY_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun EXCL_EQ(): TerminalNode? = getToken(Tokens.EXCL_EQ, 0)
 
@@ -10671,13 +10539,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ComparisonOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ComparisonOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_COMPARISON_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun LANGLE(): TerminalNode? = getToken(Tokens.LANGLE, 0)
 
@@ -10711,13 +10578,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class InOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class InOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IN_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun IN(): TerminalNode? = getToken(Tokens.IN, 0)
 
@@ -10747,13 +10613,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class IsOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class IsOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IS_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun IS(): TerminalNode? = getToken(Tokens.IS, 0)
 
@@ -10783,13 +10648,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AdditiveOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AdditiveOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ADDITIVE_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun ADD(): TerminalNode? = getToken(Tokens.ADD, 0)
 
@@ -10819,13 +10683,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiplicativeOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiplicativeOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTIPLICATIVE_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun MULT(): TerminalNode? = getToken(Tokens.MULT, 0)
 
@@ -10857,13 +10720,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AsOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AsOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_AS_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun AS(): TerminalNode? = getToken(Tokens.AS, 0)
 
@@ -10893,13 +10755,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PrefixUnaryOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PrefixUnaryOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PREFIX_UNARY_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun INCR(): TerminalNode? = getToken(Tokens.INCR, 0)
 
@@ -10953,13 +10814,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PostfixUnaryOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PostfixUnaryOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_POSTFIX_UNARY_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun INCR(): TerminalNode? = getToken(Tokens.INCR, 0)
 
@@ -11003,13 +10863,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ExclContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ExclContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_EXCL
-            set(_) = Unit
+            set(_) {}
 
         fun EXCL_NO_WS(): TerminalNode? = getToken(Tokens.EXCL_NO_WS, 0)
 
@@ -11039,13 +10898,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MemberAccessOperatorContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MemberAccessOperatorContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MEMBER_ACCESS_OPERATOR
-            set(_) = Unit
+            set(_) {}
 
         fun DOT(): TerminalNode? = getToken(Tokens.DOT, 0)
 
@@ -11108,13 +10966,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SafeNavContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SafeNavContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SAFE_NAV
-            set(_) = Unit
+            set(_) {}
 
         fun QUEST_NO_WS(): TerminalNode? = getToken(Tokens.QUEST_NO_WS, 0)
 
@@ -11138,13 +10995,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ModifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ModifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MODIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun annotation(): List<AnnotationContext> = getRuleContextsOfType<AnnotationContext>()
 
@@ -11168,19 +11024,21 @@ internal class KotlinParser(
                     when (altChoice) {
                         1 -> {
                             state = 3393
-                            when (adaptivePredict(523)) {
-                                1 -> {
+                            when (tokenStream.LA(1)) {
+                                Tokens.AT_NO_WS, Tokens.AT_PRE_WS -> {
                                     state = 3391
                                     annotation()
                                 }
-                                2 -> {
+                                Tokens.PUBLIC, Tokens.PRIVATE, Tokens.PROTECTED, Tokens.INTERNAL, Tokens.ENUM, Tokens.SEALED, Tokens.ANNOTATION, Tokens.DATA, Tokens.INNER, Tokens.VALUE, Tokens.TAILREC, Tokens.OPERATOR, Tokens.INLINE, Tokens.INFIX, Tokens.EXTERNAL, Tokens.SUSPEND, Tokens.OVERRIDE, Tokens.ABSTRACT, Tokens.FINAL, Tokens.OPEN, Tokens.CONST, Tokens.LATEINIT, Tokens.VARARG, Tokens.NOINLINE, Tokens.CROSSINLINE, Tokens.EXPECT, Tokens.ACTUAL -> {
                                     state = 3392
                                     modifier()
                                 }
                                 else -> throwNoViableAlt()
                             }
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 3395
                     altChoice = adaptivePredict(524)
@@ -11192,13 +11050,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParameterModifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParameterModifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARAMETER_MODIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun annotation(): List<AnnotationContext> = getRuleContextsOfType<AnnotationContext>()
 
@@ -11222,19 +11079,21 @@ internal class KotlinParser(
                     when (altChoice) {
                         1 -> {
                             state = 3399
-                            when (adaptivePredict(525)) {
-                                1 -> {
+                            when (tokenStream.LA(1)) {
+                                Tokens.AT_NO_WS, Tokens.AT_PRE_WS -> {
                                     state = 3397
                                     annotation()
                                 }
-                                2 -> {
+                                Tokens.VARARG, Tokens.NOINLINE, Tokens.CROSSINLINE -> {
                                     state = 3398
                                     parameterModifier()
                                 }
                                 else -> throwNoViableAlt()
                             }
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 3401
                     altChoice = adaptivePredict(526)
@@ -11246,13 +11105,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun classModifier(): ClassModifierContext? = getRuleContextOfType<ClassModifierContext>(0)
 
@@ -11335,13 +11193,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeModifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeModifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_MODIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun typeModifier(): List<TypeModifierContext> = getRuleContextsOfType<TypeModifierContext>()
 
@@ -11363,7 +11220,9 @@ internal class KotlinParser(
                             state = 3419
                             typeModifier()
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 3422
                     altChoice = adaptivePredict(529)
@@ -11375,13 +11234,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun annotation(): AnnotationContext? = getRuleContextOfType<AnnotationContext>(0)
 
@@ -11427,13 +11285,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ClassModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ClassModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_CLASS_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun ENUM(): TerminalNode? = getToken(Tokens.ENUM, 0)
 
@@ -11471,13 +11328,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MemberModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MemberModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MEMBER_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun OVERRIDE(): TerminalNode? = getToken(Tokens.OVERRIDE, 0)
 
@@ -11507,13 +11363,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class VisibilityModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class VisibilityModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_VISIBILITY_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun PUBLIC(): TerminalNode? = getToken(Tokens.PUBLIC, 0)
 
@@ -11547,13 +11402,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class VarianceModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class VarianceModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_VARIANCE_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun IN(): TerminalNode? = getToken(Tokens.IN, 0)
 
@@ -11583,13 +11437,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeParameterModifiersContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeParameterModifiersContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PARAMETER_MODIFIERS
-            set(_) = Unit
+            set(_) {}
 
         fun typeParameterModifier(): List<TypeParameterModifierContext> = getRuleContextsOfType<TypeParameterModifierContext>()
 
@@ -11611,7 +11464,9 @@ internal class KotlinParser(
                             state = 3442
                             typeParameterModifier()
                         }
-                        else -> throwNoViableAlt()
+                        else -> {
+                            throwNoViableAlt()
+                        }
                     }
                     state = 3445
                     altChoice = adaptivePredict(532)
@@ -11623,13 +11478,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class TypeParameterModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class TypeParameterModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_TYPE_PARAMETER_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun reificationModifier(): ReificationModifierContext? = getRuleContextOfType<ReificationModifierContext>(0)
 
@@ -11694,13 +11548,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class FunctionModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class FunctionModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_FUNCTION_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun TAILREC(): TerminalNode? = getToken(Tokens.TAILREC, 0)
 
@@ -11738,13 +11591,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PropertyModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PropertyModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PROPERTY_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun CONST(): TerminalNode? = getToken(Tokens.CONST, 0)
     }
@@ -11764,13 +11616,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class InheritanceModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class InheritanceModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_INHERITANCE_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun ABSTRACT(): TerminalNode? = getToken(Tokens.ABSTRACT, 0)
 
@@ -11802,13 +11653,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ParameterModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ParameterModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PARAMETER_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun VARARG(): TerminalNode? = getToken(Tokens.VARARG, 0)
 
@@ -11840,13 +11690,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class ReificationModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class ReificationModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_REIFICATION_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun REIFIED(): TerminalNode? = getToken(Tokens.REIFIED, 0)
     }
@@ -11866,13 +11715,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class PlatformModifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class PlatformModifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_PLATFORM_MODIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun EXPECT(): TerminalNode? = getToken(Tokens.EXPECT, 0)
 
@@ -11902,13 +11750,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnnotationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnnotationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANNOTATION
-            set(_) = Unit
+            set(_) {}
 
         fun singleAnnotation(): SingleAnnotationContext? = getRuleContextOfType<SingleAnnotationContext>(0)
 
@@ -11956,13 +11803,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SingleAnnotationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SingleAnnotationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SINGLE_ANNOTATION
-            set(_) = Unit
+            set(_) {}
 
         fun unescapedAnnotation(): UnescapedAnnotationContext? = getRuleContextOfType<UnescapedAnnotationContext>(0)
 
@@ -12019,13 +11865,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class MultiAnnotationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class MultiAnnotationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_MULTI_ANNOTATION
-            set(_) = Unit
+            set(_) {}
 
         fun LSQUARE(): TerminalNode? = getToken(Tokens.LSQUARE, 0)
 
@@ -12097,13 +11942,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class AnnotationUseSiteTargetContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class AnnotationUseSiteTargetContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_ANNOTATION_USE_SITE_TARGET
-            set(_) = Unit
+            set(_) {}
 
         fun COLON(): TerminalNode? = getToken(Tokens.COLON, 0)
 
@@ -12174,13 +12018,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class UnescapedAnnotationContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class UnescapedAnnotationContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_UNESCAPED_ANNOTATION
-            set(_) = Unit
+            set(_) {}
 
         fun constructorInvocation(): ConstructorInvocationContext? = getRuleContextOfType<ConstructorInvocationContext>(0)
 
@@ -12215,13 +12058,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class SimpleIdentifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class SimpleIdentifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_SIMPLE_IDENTIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun Identifier(): TerminalNode? = getToken(Tokens.Identifier, 0)
 
@@ -12343,13 +12185,12 @@ internal class KotlinParser(
         return localCtx
     }
 
-    class IdentifierContext(
-        parent: ParserRuleContext?,
-        invokingState: Int,
-    ) : ParserRuleContext(parent, invokingState) {
+    open class IdentifierContext : ParserRuleContext {
+        constructor(parent: ParserRuleContext?, invokingState: Int) : super(parent, invokingState)
+
         override var ruleIndex: Int
             get() = RULE_IDENTIFIER
-            set(_) = Unit
+            set(_) {}
 
         fun simpleIdentifier(): List<SimpleIdentifierContext> = getRuleContextsOfType<SimpleIdentifierContext>()
 
