@@ -172,15 +172,23 @@ internal object SameFileSymbolPass {
                 pkt is SyntaxPacket.CommentPacket && pkt.portLintDirectiveKind != null
             } as? SyntaxPacket.CommentPacket
 
+        val normalizedSourcePath = normalizeSourceRelativePath(stream.sourcePath, config.sourceRootPrefix)
+        val hasSynthesizedPortLint =
+            config.portLintPrefix != null ||
+                (!config.sourceRootPrefix.isNullOrEmpty() && normalizedSourcePath.isNotEmpty())
         val portLintKind =
             firstPortLintComment?.portLintDirectiveKind
-                ?: if (config.portLintPrefix != null) "source" else null
-        val normalizedSourcePath = normalizeSourceRelativePath(stream.sourcePath, config.sourceRootPrefix)
+                ?: if (hasSynthesizedPortLint) "source" else null
         val portLintTarget =
             firstPortLintComment?.portLintTarget
                 ?: config.portLintPrefix?.let { prefix ->
                     val trimmed = prefix.trimEnd('/')
                     if (trimmed.isEmpty()) normalizedSourcePath else "$trimmed/$normalizedSourcePath"
+                }
+                ?: if (!config.sourceRootPrefix.isNullOrEmpty() && normalizedSourcePath.isNotEmpty()) {
+                    normalizedSourcePath
+                } else {
+                    null
                 }
         val transliteratedFromPath =
             portLintTarget

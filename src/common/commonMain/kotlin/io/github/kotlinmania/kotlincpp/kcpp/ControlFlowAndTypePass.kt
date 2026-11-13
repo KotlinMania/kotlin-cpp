@@ -196,6 +196,8 @@ internal object ControlFlowAndTypePass {
                         walkFrame(child, inValuePosition = true, enclosingStmtFrameIndex = enclosingStmtFrameIndex, ctx = ctx)
                     } else if (child.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
                         subjectVarName = FrameAstHelpers.directIdentPacket(stream, child)?.unescapedName
+                    } else if (child.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID) {
+                        subjectVarName = "this"
                     } else if (child.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID) {
                         frame.flags = frame.flags or PacketFlags.SINGLE_EVAL_SUBJECT_REQUIRED
                         val subjTemp = "kxs_subj${ctx.nextTempIndex()}"

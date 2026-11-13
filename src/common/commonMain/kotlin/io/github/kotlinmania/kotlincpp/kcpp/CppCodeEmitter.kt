@@ -638,7 +638,10 @@ private class CppDeclarationRenderer(
             isInterfaceMethod ||
                 PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_OPEN) ||
                 PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_ABSTRACT)
-        val isOverride = PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_OVERRIDE)
+        val isOverride =
+            PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_OVERRIDE) &&
+                enclosingClass != null &&
+                enclosingClass.superTypeFrameIndices.isNotEmpty()
         val isConstMethod = shouldMarkMethodConst(sym, enclosingClass)
 
         val isSuspend = PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_SUSPEND)
@@ -649,7 +652,7 @@ private class CppDeclarationRenderer(
                 append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = true))
                 append(renderTemplatePrefix(sym.typeParams, indent))
                 if (isSuspend) {
-                    append(indent).append("[[clang::annotate(\"suspend\")]]\n")
+                    append(indent).append("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]\n")
                 }
                 append(indent)
                 if (isCAbi) {
@@ -669,7 +672,7 @@ private class CppDeclarationRenderer(
                     .append(')')
                 if (isConstMethod) append(" const")
                 if (isCAbi) append(" noexcept")
-                if (isOverride && enclosingClass != null && !isStaticOnObject) append(" override")
+                if (isOverride && !isStaticOnObject) append(" override")
 
                 if (isPureDecl) {
                     if (isInterfaceMethod || PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_ABSTRACT)) {
@@ -690,6 +693,9 @@ private class CppDeclarationRenderer(
         return buildString {
             append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = false))
             append(renderTemplatePrefix(sym.typeParams, indent))
+            if (isSuspend) {
+                append(indent).append("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n")
+            }
             append(indent)
             if (isCAbi) append("extern \"C\" ")
             append(retType)

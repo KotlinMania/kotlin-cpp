@@ -526,4 +526,66 @@ class KotlinToCppTranslationTest {
         assertEquals(2, dryRunReports.size)
         assertTrue(dryRunReports.all { it.startsWith("dry-run\t") })
     }
+
+    @Test
+    fun emitsSwitchTernaryDirectIdentityImplicitSuspendAndSynthesizedPortLint() {
+        val symbolSource =
+            """
+            package kotlinx.coroutines.internal
+
+            public class Symbol(public val symbol: String) {
+                override fun toString(): String = "<" + symbol + ">"
+
+                public fun <T> unbox(value: Any?): T = if (value === this) null as T else value as T
+            }
+            """.trimIndent() + "\n"
+
+        val cfg = CppTargetConfig(sourceRootPrefix = "/repo/tmp/kotlinx.coroutines/")
+        val symRes =
+            translateKotlinToCpp(
+                symbolSource,
+                sourcePath = "/repo/tmp/kotlinx.coroutines/kotlinx-coroutines-core/common/src/internal/Symbol.kt",
+                config = cfg,
+            )
+        val symHpp = symRes.headerArtifact.content
+        assertTrue(symHpp.startsWith("#pragma once\n// port-lint: source kotlinx-coroutines-core/common/src/internal/Symbol.kt\n"))
+        assertTrue(symHpp.contains("std::string to_string() const;"))
+        assertFalse(symHpp.contains("override"))
+        assertTrue(symHpp.contains("return (value == this) ? static_cast<T>(nullptr) : static_cast<T>(value);"))
+
+        val startSource =
+            """
+            package kotlinx.coroutines
+
+            public enum class CoroutineStart {
+                DEFAULT,
+                LAZY,
+                ATOMIC,
+                UNDISPATCHED;
+
+                public fun dispatch(tag: Int): Unit =
+                    when (this) {
+                        DEFAULT -> runDefault(tag)
+                        LAZY -> Unit
+                        else -> runFallback(tag)
+                    }
+
+                public val isLazy: Boolean get() = this === LAZY
+            }
+
+            public suspend fun opaquePtr(flag: Boolean): Any? {
+                yield()
+                return if (flag) null else null
+            }
+            """.trimIndent() + "\n"
+
+        val startRes = translateKotlinToCpp(startSource, sourcePath = "CoroutineStart.kt")
+        val startHpp = startRes.headerArtifact.content
+        assertTrue(startHpp.contains("switch (self) {"))
+        assertTrue(startHpp.contains("case CoroutineStart::DEFAULT:"))
+        assertTrue(startHpp.contains("case CoroutineStart::LAZY:"))
+        assertFalse(startHpp.contains("Unit;"))
+        assertTrue(startHpp.contains("return (self == CoroutineStart::LAZY);"))
+        assertTrue(startHpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]"))
+    }
 }
