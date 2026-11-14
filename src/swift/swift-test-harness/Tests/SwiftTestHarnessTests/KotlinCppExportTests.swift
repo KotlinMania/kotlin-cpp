@@ -75,6 +75,8 @@ struct KotlinCppExportTests {
             portLintPrefix: nil,
             sourceRootPrefix: nil,
             rootNamespaceOverride: nil,
+            fileStemSuffix: nil,
+            sourceSetSubdir: nil,
             emitCompanionCAbiFiles: false
         )
         let result = kcpp.translateKotlinToCpp(
@@ -110,6 +112,8 @@ struct KotlinCppExportTests {
             portLintPrefix: nil,
             sourceRootPrefix: nil,
             rootNamespaceOverride: nil,
+            fileStemSuffix: nil,
+            sourceSetSubdir: nil,
             emitCompanionCAbiFiles: true
         )
         let result = kcpp.translateKotlinToCpp(

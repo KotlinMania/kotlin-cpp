@@ -30,6 +30,8 @@ public data class CppTargetConfig(
     public val portLintPrefix: String? = null,
     public val sourceRootPrefix: String? = null,
     public val rootNamespaceOverride: String? = null,
+    public val fileStemSuffix: String? = null,
+    public val sourceSetSubdir: String? = null,
     public val emitCompanionCAbiFiles: Boolean = false,
 ) {
     init {
@@ -258,7 +260,7 @@ internal object FrameAstHelpers {
             KtNodeTypes.NULLABLE_TYPE_ID,
             KtNodeTypes.TYPE_PROJECTION_ID,
             -> {
-                val child = childFrames(stream, typeFrame).firstOrNull()
+                val child = childFrames(stream, typeFrame).firstOrNull { it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID }
                 if (child != null) extractPrimaryTypeSimpleName(stream, child) else null
             }
             KtNodeTypes.USER_TYPE_ID -> {
@@ -621,4 +623,44 @@ internal object FrameAstHelpers {
             knownFunctionNames = knownFunctionNames,
             allowFenceTranslation = allowFenceTranslation,
         )
+
+    fun unwrapLambdaExpression(
+        stream: PacketStream,
+        frame: PacketFrame,
+    ): PacketFrame? =
+        when (frame.nodeTypeId) {
+            KtNodeTypes.LAMBDA_EXPRESSION_ID -> frame
+            KtNodeTypes.LAMBDA_ARGUMENT_ID,
+            KtNodeTypes.VALUE_ARGUMENT_ID,
+            -> {
+                val inner =
+                    childFrames(stream, frame).lastOrNull {
+                        it.nodeTypeId != KtNodeTypes.VALUE_ARGUMENT_NAME_ID &&
+                            it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID
+                    }
+                if (inner != null) unwrapLambdaExpression(stream, inner) else null
+            }
+            KtNodeTypes.LABELED_EXPRESSION_ID -> {
+                val inner =
+                    childFrames(stream, frame).lastOrNull {
+                        it.nodeTypeId != KtNodeTypes.LABEL_QUALIFIER_ID &&
+                            it.nodeTypeId != KtNodeTypes.LABEL_ID
+                    }
+                if (inner != null) unwrapLambdaExpression(stream, inner) else null
+            }
+            KtNodeTypes.ANNOTATED_EXPRESSION_ID -> {
+                val inner =
+                    childFrames(stream, frame).lastOrNull {
+                        it.nodeTypeId != KtNodeTypes.ANNOTATION_ENTRY_ID &&
+                            it.nodeTypeId != KtNodeTypes.ANNOTATION_ID &&
+                            it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID
+                    }
+                if (inner != null) unwrapLambdaExpression(stream, inner) else null
+            }
+            KtNodeTypes.PARENTHESIZED_ID -> {
+                val inner = childFrames(stream, frame).firstOrNull()
+                if (inner != null) unwrapLambdaExpression(stream, inner) else null
+            }
+            else -> null
+        }
 }

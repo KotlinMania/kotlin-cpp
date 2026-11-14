@@ -3,11 +3,14 @@ package io.github.kotlinmania.kotlincpp.packet
 import io.github.kotlinmania.antlr4.BaseErrorListener
 import io.github.kotlinmania.antlr4.CharStreams
 import io.github.kotlinmania.antlr4.CommonTokenStream
+import io.github.kotlinmania.antlr4.ListTokenSource
 import io.github.kotlinmania.antlr4.ParserRuleContext
 import io.github.kotlinmania.antlr4.RecognitionException
 import io.github.kotlinmania.antlr4.Recognizer
 import io.github.kotlinmania.antlr4.Token
+import io.github.kotlinmania.antlr4.WritableToken
 import io.github.kotlinmania.antlr4.tree.ErrorNode
+import io.github.kotlinmania.antlr4.tree.ParseTree
 import io.github.kotlinmania.antlr4.tree.TerminalNode
 import io.github.kotlinmania.kotlincpp.grammar.KotlinLexer
 import io.github.kotlinmania.kotlincpp.grammar.KotlinParser
@@ -71,11 +74,6 @@ internal object KotlinPacketLexing {
         val tokenStream = CommonTokenStream(lexer)
         tokenStream.fill()
 
-        val parser = KotlinParser(tokenStream)
-        parser.removeErrorListeners()
-        parser.addErrorListener(errorListener)
-        val fileCtx = parser.kotlinFile()
-
         val allTokens = tokenStream.allTokens()
         val nonEofCount =
             if (allTokens.isNotEmpty() && allTokens.last().type == Token.EOF) {
@@ -83,7 +81,20 @@ internal object KotlinPacketLexing {
             } else {
                 allTokens.size
             }
+
+        val mutatedNlIndices = temporarilyDisambiguateSameLineReturnNewlines(allTokens, nonEofCount)
+        val fileCtx =
+            try {
+                val parser = KotlinParser(tokenStream)
+                parser.removeErrorListeners()
+                parser.addErrorListener(errorListener)
+                parser.kotlinFile()
+            } finally {
+                restoreNewlineTokens(allTokens, mutatedNlIndices)
+            }
+
         val sourceTokens = allTokens.subList(0, nonEofCount)
+        repairExplicitDelegationSwallowedClassBodies(fileCtx, sourceTokens, sourcePath)
 
         val marks = preScanParseTree(fileCtx, nonEofCount, sourcePath, throwOnError = true)!!
         return buildParsedUnitFromTokens(source, sourcePath, fileCtx, sourceTokens, nonEofCount, marks)
@@ -114,12 +125,6 @@ internal object KotlinPacketLexing {
         tokenStream.fill()
         if (syntaxErrors > 0) return null
 
-        val parser = KotlinParser(tokenStream)
-        parser.removeErrorListeners()
-        parser.addErrorListener(errorListener)
-        val fileCtx = parser.kotlinFile()
-        if (syntaxErrors > 0) return null
-
         val allTokens = tokenStream.allTokens()
         val nonEofCount =
             if (allTokens.isNotEmpty() && allTokens.last().type == Token.EOF) {
@@ -127,6 +132,19 @@ internal object KotlinPacketLexing {
             } else {
                 allTokens.size
             }
+
+        val mutatedNlIndices = temporarilyDisambiguateSameLineReturnNewlines(allTokens, nonEofCount)
+        val fileCtx =
+            try {
+                val parser = KotlinParser(tokenStream)
+                parser.removeErrorListeners()
+                parser.addErrorListener(errorListener)
+                parser.kotlinFile()
+            } finally {
+                restoreNewlineTokens(allTokens, mutatedNlIndices)
+            }
+        if (syntaxErrors > 0) return null
+
         val sourceTokens = allTokens.subList(0, nonEofCount)
         if (sourceTokens.any {
                 it.type == KotlinLexer.Tokens.ErrorCharacter ||
@@ -137,6 +155,7 @@ internal object KotlinPacketLexing {
             return null
         }
 
+        repairExplicitDelegationSwallowedClassBodies(fileCtx, sourceTokens, sourcePath)
         val marks = preScanParseTree(fileCtx, nonEofCount, sourcePath, throwOnError = false) ?: return null
         return buildParsedUnitFromTokens(source, sourcePath, fileCtx, sourceTokens, nonEofCount, marks)
     }
@@ -1620,4 +1639,279 @@ internal object KotlinPacketLexing {
             KtTokens.EXTERNAL_MODIFIER_ID -> PacketFlags.MOD_EXTERNAL_OR_EXTENSION
             else -> PacketFlags.NONE
         }
+
+    /**
+     * Prevents canonical `KotlinParser.g4`'s `jumpExpression : (RETURN | RETURN_AT) expression?`
+     * combined with `infixFunctionCall : rangeExpression (simpleIdentifier NL* rangeExpression)*`
+     * from dropping a same-line returned identifier `X` in `if (...) return X` and stealing the
+     * following line's `<receiver>.<prop> = ...` statement across `NL`.
+     *
+     * Restored immediately in `finally` before packet construction so every [SyntaxPacket] and
+     * lossless round-trip byte remains 100% identical to the input source.
+     */
+    private fun temporarilyDisambiguateSameLineReturnNewlines(
+        allTokens: List<Token>,
+        nonEofCount: Int,
+    ): IntArray {
+        val defaultIndices = IntArray(nonEofCount)
+        var defaultCount = 0
+        for (i in 0 until nonEofCount) {
+            if (allTokens[i].channel == Token.DEFAULT_CHANNEL) {
+                defaultIndices[defaultCount] = i
+                defaultCount += 1
+            }
+        }
+        val mutated = ArrayList<Int>(4)
+        var dIdx = 0
+        while (dIdx + 2 < defaultCount) {
+            val t0 = allTokens[defaultIndices[dIdx]]
+            if (t0.type == KotlinLexer.Tokens.RETURN || t0.type == KotlinLexer.Tokens.RETURN_AT) {
+                val t1 = allTokens[defaultIndices[dIdx + 1]]
+                val t2Idx = defaultIndices[dIdx + 2]
+                val t2 = allTokens[t2Idx]
+                if (t1.type != KotlinLexer.Tokens.NL &&
+                    t1.type != KotlinLexer.Tokens.SEMICOLON &&
+                    t2.type == KotlinLexer.Tokens.NL
+                ) {
+                    var look = dIdx + 3
+                    while (look < defaultCount && allTokens[defaultIndices[look]].type == KotlinLexer.Tokens.NL) {
+                        look += 1
+                    }
+                    val nextType = if (look < defaultCount) allTokens[defaultIndices[look]].type else Token.EOF
+                    if (nextType !in LINE_CONTINUATION_AFTER_RETURN_TOKENS) {
+                        val writable = t2 as? WritableToken
+                        if (writable != null) {
+                            writable.type = KotlinLexer.Tokens.SEMICOLON
+                            mutated.add(t2Idx)
+                        }
+                    }
+                }
+            }
+            dIdx += 1
+        }
+        return mutated.toIntArray()
+    }
+
+    private fun restoreNewlineTokens(
+        allTokens: List<Token>,
+        mutatedIndices: IntArray,
+    ) {
+        for (idx in mutatedIndices) {
+            (allTokens[idx] as? WritableToken)?.type = KotlinLexer.Tokens.NL
+        }
+    }
+
+    private val LINE_CONTINUATION_AFTER_RETURN_TOKENS: Set<Int> =
+        setOf(
+            KotlinLexer.Tokens.DOT,
+            KotlinLexer.Tokens.QUEST_NO_WS,
+            KotlinLexer.Tokens.COLONCOLON,
+            KotlinLexer.Tokens.DISJ,
+            KotlinLexer.Tokens.CONJ,
+            KotlinLexer.Tokens.AS,
+            KotlinLexer.Tokens.AS_SAFE,
+            KotlinLexer.Tokens.LCURL,
+            KotlinLexer.Tokens.AT_NO_WS,
+            KotlinLexer.Tokens.AT_POST_WS,
+            KotlinLexer.Tokens.ELSE,
+            KotlinLexer.Tokens.CATCH,
+            KotlinLexer.Tokens.FINALLY,
+            KotlinLexer.Tokens.WHILE,
+            KotlinLexer.Tokens.RPAREN,
+            KotlinLexer.Tokens.RCURL,
+            KotlinLexer.Tokens.RSQUARE,
+            KotlinLexer.Tokens.COMMA,
+            KotlinLexer.Tokens.SEMICOLON,
+            KotlinLexer.Tokens.COLON,
+            KotlinLexer.Tokens.ARROW,
+        )
+
+    /**
+     * Repairs canonical `KotlinParser.g4`'s `explicitDelegation : (userType | functionType) NL* BY NL* expression`
+     * greedily consuming a class/object body `{ ... }` as a trailing `annotatedLambda` on the delegate expression
+     * (e.g. `class DispatchedContinuation<T>(...) : ..., Continuation<T> by continuation { ... }`).
+     */
+    private fun repairExplicitDelegationSwallowedClassBodies(
+        root: ParserRuleContext,
+        sourceTokens: List<Token>,
+        sourcePath: String,
+    ) {
+        fun tryRepairHeader(ctx: ParserRuleContext) {
+            val isCandidate =
+                ctx is KotlinParser.ClassDeclarationContext ||
+                    ctx is KotlinParser.ObjectDeclarationContext ||
+                    ctx is KotlinParser.CompanionObjectContext ||
+                    ctx is KotlinParser.ObjectLiteralContext
+            if (!isCandidate) return
+            val kids = ctx.children ?: return
+            if (kids.any {
+                    it is KotlinParser.ClassBodyContext ||
+                        it is KotlinParser.EnumClassBodyContext ||
+                        it is KotlinParser.TypeConstraintsContext
+                }
+            ) {
+                return
+            }
+            val delSpecs =
+                kids.lastOrNull { it is KotlinParser.DelegationSpecifiersContext }
+                    as? KotlinParser.DelegationSpecifiersContext ?: return
+            val lastAnnotSpec =
+                delSpecs.children?.lastOrNull { it is KotlinParser.AnnotatedDelegationSpecifierContext }
+                    as? KotlinParser.AnnotatedDelegationSpecifierContext ?: return
+            val spec =
+                lastAnnotSpec.children?.lastOrNull { it is KotlinParser.DelegationSpecifierContext }
+                    as? KotlinParser.DelegationSpecifierContext ?: return
+            val expDel = spec.explicitDelegation() ?: return
+            val exprCtx =
+                expDel.children?.lastOrNull { it is KotlinParser.ExpressionContext }
+                    as? KotlinParser.ExpressionContext ?: return
+            val exprStartIdx = exprCtx.start?.tokenIndex ?: return
+            val exprStopTok = exprCtx.stop ?: return
+
+            var cur: ParserRuleContext = exprCtx
+            var foundPostfix: KotlinParser.PostfixUnaryExpressionContext? = null
+            while (true) {
+                if (cur is KotlinParser.PostfixUnaryExpressionContext && cur.stop === exprStopTok) {
+                    val lastChild = cur.children?.lastOrNull()
+                    if (lastChild is KotlinParser.PostfixUnarySuffixContext) {
+                        val cs =
+                            lastChild.children?.lastOrNull { it is KotlinParser.CallSuffixContext }
+                                as? KotlinParser.CallSuffixContext
+                        val al =
+                            cs?.children?.lastOrNull { it is KotlinParser.AnnotatedLambdaContext }
+                                as? KotlinParser.AnnotatedLambdaContext
+                        if (al != null && al.stop === exprStopTok) {
+                            foundPostfix = cur
+                        }
+                    }
+                }
+                val nextRule =
+                    cur.children?.lastOrNull { it is ParserRuleContext && it.stop === exprStopTok }
+                        as? ParserRuleContext ?: break
+                cur = nextRule
+            }
+
+            val postfixCtx = foundPostfix ?: return
+            val suffixCtx = postfixCtx.children?.lastOrNull() as? KotlinParser.PostfixUnarySuffixContext ?: return
+            val callSuffix =
+                suffixCtx.children?.lastOrNull { it is KotlinParser.CallSuffixContext }
+                    as? KotlinParser.CallSuffixContext ?: return
+            val lambdaCtx =
+                callSuffix.children?.lastOrNull { it is KotlinParser.AnnotatedLambdaContext }
+                    as? KotlinParser.AnnotatedLambdaContext ?: return
+            val lambdaStartIdx = lambdaCtx.start?.tokenIndex ?: return
+            val lambdaStopIdx = lambdaCtx.stop?.tokenIndex ?: return
+            if (lambdaStartIdx <= exprStartIdx || lambdaStopIdx >= sourceTokens.size) return
+            if (sourceTokens[lambdaStartIdx].type != KotlinLexer.Tokens.LCURL ||
+                sourceTokens[lambdaStopIdx].type != KotlinLexer.Tokens.RCURL
+            ) {
+                return
+            }
+
+            var subErrors = 0
+            val subListener =
+                object : BaseErrorListener() {
+                    override fun syntaxError(
+                        recognizer: Recognizer<*, *>?,
+                        offendingSymbol: Any?,
+                        line: Int,
+                        charPositionInLine: Int,
+                        msg: String?,
+                        e: RecognitionException?,
+                    ) {
+                        subErrors += 1
+                    }
+                }
+
+            val slice = sourceTokens.subList(lambdaStartIdx, lambdaStopIdx + 1)
+            val parsedBody: KotlinParser.ClassBodyContext
+            val reachedEof: Boolean
+            try {
+                val subSource = ListTokenSource(slice, sourcePath)
+                val subStream = CommonTokenStream(subSource)
+                subStream.fill()
+                val subParser = KotlinParser(subStream)
+                subParser.removeErrorListeners()
+                subParser.addErrorListener(subListener)
+                parsedBody = subParser.classBody()
+                reachedEof = subStream.LA(1) == Token.EOF
+            } finally {
+                for (tIdx in lambdaStartIdx..lambdaStopIdx) {
+                    (sourceTokens[tIdx] as? WritableToken)?.tokenIndex = tIdx
+                }
+            }
+
+            if (subErrors > 0 || !reachedEof || parsedBody.exception != null) return
+            fun containsErrorNode(tree: ParseTree): Boolean {
+                if (tree is ErrorNode) return true
+                if (tree is ParserRuleContext) {
+                    val ch = tree.children ?: return false
+                    for (c in ch) {
+                        if (containsErrorNode(c)) return true
+                    }
+                }
+                return false
+            }
+            if (containsErrorNode(parsedBody)) return
+
+            var newStopIdx = lambdaStartIdx - 1
+            while (newStopIdx >= exprStartIdx) {
+                val tok = sourceTokens[newStopIdx]
+                if (tok.channel == Token.DEFAULT_CHANNEL && tok.type != KotlinLexer.Tokens.NL) {
+                    break
+                }
+                newStopIdx -= 1
+            }
+            if (newStopIdx < exprStartIdx) return
+            val newStopTok = sourceTokens[newStopIdx]
+
+            val hasCallArgsOrTypeArgs =
+                callSuffix.children?.any {
+                    it is KotlinParser.ValueArgumentsContext || it is KotlinParser.TypeArgumentsContext
+                } == true
+            if (hasCallArgsOrTypeArgs) {
+                while (callSuffix.children?.isNotEmpty() == true) {
+                    val last = callSuffix.children!!.last()
+                    if (last === lambdaCtx || (last is TerminalNode && last.symbol?.type == KotlinLexer.Tokens.NL)) {
+                        callSuffix.removeLastChild()
+                        if (last === lambdaCtx) break
+                    } else {
+                        break
+                    }
+                }
+                while (callSuffix.children?.lastOrNull().let { it is TerminalNode && it.symbol?.type == KotlinLexer.Tokens.NL }) {
+                    callSuffix.removeLastChild()
+                }
+                callSuffix.stop = newStopTok
+                suffixCtx.stop = newStopTok
+            } else {
+                postfixCtx.removeLastChild()
+                while (postfixCtx.children?.lastOrNull().let { it is TerminalNode && it.symbol?.type == KotlinLexer.Tokens.NL }) {
+                    postfixCtx.removeLastChild()
+                }
+            }
+
+            var anc: ParserRuleContext? = postfixCtx
+            while (anc != null && anc !== ctx) {
+                anc.stop = newStopTok
+                anc = anc.parent as? ParserRuleContext
+            }
+
+            parsedBody.setParent(ctx)
+            ctx.addChild(parsedBody)
+        }
+
+        fun walk(node: ParserRuleContext) {
+            tryRepairHeader(node)
+            val kids = node.children ?: return
+            for (i in kids.indices) {
+                val child = kids[i]
+                if (child is ParserRuleContext) {
+                    walk(child)
+                }
+            }
+        }
+
+        walk(root)
+    }
 }

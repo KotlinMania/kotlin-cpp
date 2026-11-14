@@ -48,11 +48,13 @@ internal data class KtClassSymbol(
     val typeParams: List<KtTypeParamInfo>,
     val primaryConstructorParams: List<KtValueParamInfo>,
     val superTypeFrameIndices: List<Int>,
+    val delegatedSuperTypeFrameIndices: Set<Int> = emptySet(),
     val superCallArgsBySuperIndex: Map<Int, Int>,
     val enumEntries: List<KtEnumEntrySymbol>,
     val memberClassFrameIndices: List<Int>,
     val memberFunctionFrameIndices: List<Int>,
     val memberPropertyFrameIndices: List<Int>,
+    val initBlockFrameIndices: List<Int> = emptyList(),
     val companionFrameIndex: Int?,
     val annotations: List<KtAnnotationInfo>,
     val flags: Long,
@@ -82,6 +84,7 @@ internal data class KtPropertySymbol(
     val cppName: String,
     val frameIndex: Int,
     val enclosingClassFrameIndex: Int?,
+    val typeParams: List<KtTypeParamInfo> = emptyList(),
     val isVar: Boolean,
     val isConst: Boolean,
     val receiverTypeFrameIndex: Int?,
@@ -109,7 +112,6 @@ internal class SameFileSymbolTable(
     val sourceRelativePath: String,
     val portLintDirectiveKind: String?,
     val portLintSourcePath: String?,
-    val transliteratedFromPath: String,
     val imports: List<KtImportInfo>,
     val importAliases: Map<String, String>,
     val topLevelDeclarationFrames: List<PacketFrame>,
@@ -121,6 +123,7 @@ internal class SameFileSymbolTable(
     val propertiesByName: Map<String, KtPropertySymbol>,
     val typeAliasesByFrame: Map<Int, KtTypeAliasSymbol>,
     val polymorphicTypeNames: Set<String>,
+    val sharedHierarchyTypeNames: Set<String>,
     val restrictsSuspensionTypeNames: Set<String>,
     val forwardDeclaredClassFrames: List<Int>,
 ) {
@@ -163,8 +166,26 @@ internal object SameFileSymbolPass {
                 .filter { it.isNotEmpty() }
                 .map { CppNamingPolicy.toNamespaceSegment(it) }
 
-        val fileStem = computeFileStem(stream.sourcePath)
-        val nsDir = namespaceSegments.joinToString("/")
+        val fileStem = computeFileStem(stream.sourcePath, config.fileStemSuffix)
+        val cleanSubdir =
+            config.sourceSetSubdir
+                ?.trim()
+                ?.trim('/')
+                ?.takeIf { it.isNotEmpty() }
+        val outputDirSegments =
+            if (cleanSubdir == null) {
+                namespaceSegments
+            } else if (namespaceSegments.size >= 2 && namespaceSegments[0] == "kotlinx" && namespaceSegments[1] == "coroutines") {
+                buildList(namespaceSegments.size + 1) {
+                    add("kotlinx")
+                    add("coroutines")
+                    add(cleanSubdir)
+                    addAll(namespaceSegments.subList(2, namespaceSegments.size))
+                }
+            } else {
+                listOf(cleanSubdir) + namespaceSegments
+            }
+        val nsDir = outputDirSegments.joinToString("/")
         val headerRelativePath = if (nsDir.isEmpty()) "$fileStem.hpp" else "$nsDir/$fileStem.hpp"
         val sourceRelativePath = if (nsDir.isEmpty()) "$fileStem.cpp" else "$nsDir/$fileStem.cpp"
 
@@ -191,9 +212,6 @@ internal object SameFileSymbolPass {
                 } else {
                     null
                 }
-        val transliteratedFromPath =
-            portLintTarget
-                ?: normalizedSourcePath.ifEmpty { "$fileStem.kt" }
 
         val imports = ArrayList<KtImportInfo>()
         val importAliases = LinkedHashMap<String, String>()
@@ -272,6 +290,7 @@ internal object SameFileSymbolPass {
         }
 
         val polymorphicTypes = LinkedHashSet<String>(KNOWN_POLYMORPHIC_TYPES)
+        val sharedHierarchyTypes = LinkedHashSet<String>(CppTypeTranslator.SHARED_HIERARCHY_TYPES)
         val restrictsSuspensionTypes = LinkedHashSet<String>(KNOWN_RESTRICTS_SUSPENSION_TYPES)
         for (cls in classesByFrame.values) {
             if (cls.kind == KtClassKind.INTERFACE ||
@@ -287,6 +306,37 @@ internal object SameFileSymbolPass {
                 restrictsSuspensionTypes.add(cls.cppName)
                 cls.frameIndex.let { idx ->
                     stream.frames[idx].flags = stream.frames[idx].flags or PacketFlags.RESTRICTS_SUSPENSION_SCOPE
+                }
+            }
+        }
+        var sharedChanged = true
+        while (sharedChanged) {
+            sharedChanged = false
+            for (cls in classesByFrame.values) {
+                val isExcludedKind =
+                    cls.kind == KtClassKind.SIMPLE_ENUM ||
+                        cls.kind == KtClassKind.RICH_ENUM ||
+                        cls.kind == KtClassKind.VALUE_CLASS ||
+                        cls.kind == KtClassKind.ANNOTATION_CLASS ||
+                        cls.kind == KtClassKind.COMPANION_OBJECT
+                if (isExcludedKind || cls.kotlinName == "Key") continue
+                if (cls.kotlinName in CppTypeTranslator.KOTLIN_STDLIB_EXCEPTION_CLASSES ||
+                    cls.kotlinName.endsWith("Exception") ||
+                    cls.kotlinName.endsWith("Error")
+                ) {
+                    continue
+                }
+                val isInterfaceOrAbstract =
+                    cls.kind == KtClassKind.INTERFACE ||
+                        PacketFlags.hasFlag(cls.flags, PacketFlags.MOD_ABSTRACT)
+                val inheritsShared =
+                    cls.superTypeFrameIndices.any { stIdx ->
+                        val baseSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[stIdx])
+                        baseSimple != null && baseSimple in sharedHierarchyTypes
+                    }
+                if (isInterfaceOrAbstract || inheritsShared) {
+                    if (sharedHierarchyTypes.add(cls.kotlinName)) sharedChanged = true
+                    if (sharedHierarchyTypes.add(cls.cppName)) sharedChanged = true
                 }
             }
         }
@@ -308,7 +358,6 @@ internal object SameFileSymbolPass {
             sourceRelativePath = sourceRelativePath,
             portLintDirectiveKind = portLintKind,
             portLintSourcePath = portLintTarget,
-            transliteratedFromPath = transliteratedFromPath,
             imports = imports,
             importAliases = importAliases,
             topLevelDeclarationFrames = topLevelDeclFrames,
@@ -320,9 +369,37 @@ internal object SameFileSymbolPass {
             propertiesByName = propertiesByName,
             typeAliasesByFrame = typeAliasesByFrame,
             polymorphicTypeNames = polymorphicTypes,
+            sharedHierarchyTypeNames = sharedHierarchyTypes,
             restrictsSuspensionTypeNames = restrictsSuspensionTypes,
             forwardDeclaredClassFrames = forwardDecls,
         )
+    }
+
+    private fun frameHasNonVoidPtrStarProjection(
+        stream: PacketStream,
+        frame: PacketFrame,
+    ): Boolean {
+        if (frame.nodeTypeId == KtNodeTypes.USER_TYPE_ID) {
+            val simple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, frame)
+            val argList = FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.TYPE_ARGUMENT_LIST_ID)
+            if (argList != null) {
+                for (proj in FrameAstHelpers.childFramesOfType(stream, argList, KtNodeTypes.TYPE_PROJECTION_ID)) {
+                    val innerType = FrameAstHelpers.firstChildFrame(stream, proj, KtNodeTypes.TYPE_REFERENCE_ID)
+                    if (innerType == null) {
+                        if (simple !in CppTypeTranslator.VOID_PTR_STAR_PROJECTION_TYPES) {
+                            return true
+                        }
+                    } else if (frameHasNonVoidPtrStarProjection(stream, innerType)) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+        for (child in FrameAstHelpers.childFrames(stream, frame)) {
+            if (frameHasNonVoidPtrStarProjection(stream, child)) return true
+        }
+        return false
     }
 
     private fun extractPackageName(
@@ -341,7 +418,10 @@ internal object SameFileSymbolPass {
         return parts.joinToString(".")
     }
 
-    private fun computeFileStem(sourcePath: String): String {
+    private fun computeFileStem(
+        sourcePath: String,
+        fileStemSuffix: String?,
+    ): String {
         val normalized = sourcePath.replace('\\', '/')
         val fileName = normalized.substringAfterLast('/')
         val withoutKt =
@@ -350,11 +430,25 @@ internal object SameFileSymbolPass {
             } else {
                 fileName
             }
+        for (suffix in PRESERVED_MULTIPLATFORM_SUFFIXES) {
+            if (withoutKt.length > suffix.length && withoutKt.endsWith(suffix, ignoreCase = true)) {
+                val rawBase = withoutKt.substring(0, withoutKt.length - suffix.length).substringBefore('.')
+                if (rawBase.isNotEmpty() && rawBase != "<memory>") {
+                    return "${CppNamingPolicy.toTypeName(rawBase)}${suffix.lowercase()}"
+                }
+            }
+        }
         val base = withoutKt.substringBefore('.')
         if (base.isEmpty() || base == "<memory>") {
             return "GeneratedModule"
         }
-        return CppNamingPolicy.toTypeName(base)
+        val stem = CppNamingPolicy.toTypeName(base)
+        val cleanExtraSuffix = fileStemSuffix?.trim().orEmpty()
+        if (cleanExtraSuffix.isEmpty()) {
+            return stem
+        }
+        val dottedSuffix = if (cleanExtraSuffix.startsWith('.')) cleanExtraSuffix else ".$cleanExtraSuffix"
+        return "$stem$dottedSuffix"
     }
 
     private fun normalizeSourceRelativePath(
@@ -417,7 +511,7 @@ internal object SameFileSymbolPass {
         isWildcard: Boolean,
     ): Pair<String?, String?> {
         // Compiler/JVM/JS/Native-annotation-only packages produce no C++ header dependency.
-        if (IGNORED_IMPORT_PREFIXES.any { fqName.startsWith(it) }) {
+        if (IGNORED_IMPORT_PREFIXES.any { fqName.startsWith(it) } || fqName.startsWith("kotlin.contracts")) {
             return null to null
         }
         if (fqName.startsWith("kotlin.coroutines.intrinsics")) {
@@ -429,28 +523,176 @@ internal object SameFileSymbolPass {
         ) {
             return "kotlinx/coroutines/Continuation.hpp" to null
         }
-        if (fqName == "kotlin.coroutines.CoroutineContext") {
-            return "kotlinx/coroutines/CoroutineContext.hpp" to null
+        if (fqName == "kotlin.coroutines.ContinuationInterceptor") {
+            return "kotlinx/coroutines/ContinuationInterceptor.hpp" to null
+        }
+        if (fqName == "kotlin.coroutines.CoroutineContext" ||
+            fqName == "kotlin.coroutines.AbstractCoroutineContextElement" ||
+            fqName == "kotlin.coroutines.AbstractCoroutineContextKey" ||
+            fqName == "kotlin.coroutines.EmptyCoroutineContext" ||
+            (isWildcard && fqName == "kotlin.coroutines")
+        ) {
+            return "kotlinx/coroutines/context_impl.hpp" to null
+        }
+        if (fqName == "kotlin.coroutines.cancellation.CancellationException" ||
+            fqName == "kotlinx.coroutines.CancellationException"
+        ) {
+            return "kotlin/coroutines/cancellation/CancellationException.hpp" to null
+        }
+        if (fqName.startsWith("kotlin.native.concurrent")) {
+            return "kotlin/native/concurrent/Worker.hpp" to null
+        }
+        if (fqName.startsWith("kotlin.time")) {
+            return "kotlin/time/TimeSource.hpp" to null
+        }
+        if (fqName == "kotlin.test" || fqName.startsWith("kotlin.test.")) {
+            return "kotlin/test/Assertions.hpp" to null
         }
         if (fqName.startsWith("platform.posix")) {
             return null to "unistd.h"
+        }
+        if (fqName.startsWith("platform.CoreFoundation")) {
+            return null to "CoreFoundation/CoreFoundation.h"
+        }
+        if (fqName.startsWith("platform.darwin")) {
+            return null to "dispatch/dispatch.h"
         }
         if (fqName.startsWith("kotlin.")) {
             return null to null
         }
         if (isWildcard) {
-            return null to null
+            return when (fqName) {
+                "kotlinx.coroutines.selects" -> "kotlinx/coroutines/selects/Select.hpp" to null
+                "kotlinx.coroutines.channels" -> "kotlinx/coroutines/channels/Channel.hpp" to null
+                "kotlinx.coroutines.flow" -> "kotlinx/coroutines/flow/Flow.hpp" to null
+                "kotlinx.coroutines.sync" -> "kotlinx/coroutines/sync/Mutex.hpp" to null
+                "kotlinx.coroutines.intrinsics" -> "kotlinx/coroutines/intrinsics/Intrinsics.hpp" to null
+                "kotlinx.coroutines.test" -> "kotlinx/coroutines/test/TestBuilders.common.hpp" to null
+                else -> null to null
+            }
+        }
+        when (fqName) {
+            "kotlinx.coroutines.flow.internal.NULL",
+            "kotlinx.coroutines.flow.internal.UNINITIALIZED",
+            "kotlinx.coroutines.flow.internal.DONE",
+            -> return "kotlinx/coroutines/flow/internal/NullSurrogate.hpp" to null
+            "kotlinx.coroutines.flow.internal.NopCollector" -> return "kotlinx/coroutines/flow/internal/NopCollector.hpp" to null
+            "kotlinx.coroutines.flow.internal.SendingCollector" -> return "kotlinx/coroutines/flow/internal/SendingCollector.hpp" to null
+            "kotlinx.coroutines.flow.internal.FlowCoroutine",
+            "kotlinx.coroutines.flow.internal.flowScope",
+            -> return "kotlinx/coroutines/flow/internal/FlowCoroutine.hpp" to null
+            "kotlinx.coroutines.flow.internal.SafeCollector",
+            "kotlinx.coroutines.flow.internal.checkContext",
+            -> return "kotlinx/coroutines/flow/internal/SafeCollector.common.hpp" to null
+            "kotlinx.coroutines.flow.internal.AbortFlowException",
+            "kotlinx.coroutines.flow.internal.checkOwnership",
+            -> return "kotlinx/coroutines/flow/internal/FlowExceptions.common.hpp" to null
+            "kotlinx.coroutines.internal.CLOSED" -> return "kotlinx/coroutines/internal/ConcurrentLinkedList.hpp" to null
+            "kotlinx.coroutines.internal.NO_DECISION",
+            "kotlinx.coroutines.internal.RETRY_ATOMIC",
+            "kotlinx.coroutines.internal.updateThreadContext",
+            "kotlinx.coroutines.internal.restoreThreadContext",
+            "kotlinx.coroutines.internal.NO_THREAD_ELEMENTS",
+            "kotlinx.coroutines.ThreadContextElement",
+            "kotlinx.coroutines.channels.ActorScope",
+            -> return null to null
+            "kotlinx.coroutines.internal.resumeCancellableWith" -> return "kotlinx/coroutines/internal/DispatchedContinuation.hpp" to null
+            "kotlinx.coroutines.internal.withCoroutineContext",
+            "kotlinx.coroutines.internal.withContinuationContext",
+            -> return "kotlinx/coroutines/CoroutineContext.common.hpp" to null
+            "kotlinx.coroutines.internal.threadContextElements" -> return "kotlinx/coroutines/internal/ThreadContext.common.hpp" to null
+            "kotlinx.coroutines.internal.systemProp" -> return "kotlinx/coroutines/internal/SystemProps.common.hpp" to null
+            "kotlinx.coroutines.internal.synchronized" -> return "kotlinx/coroutines/internal/Synchronized.common.hpp" to null
+            "kotlinx.coroutines.internal.commonThreadLocal",
+            "kotlinx.coroutines.internal.CommonThreadLocal",
+            -> return "kotlinx/coroutines/internal/ThreadLocal.common.hpp" to null
+            "kotlinx.coroutines.internal.recoverStackTrace",
+            "kotlinx.coroutines.internal.recoverAndThrow",
+            "kotlinx.coroutines.internal.unwrap",
+            "kotlinx.coroutines.internal.CoroutineStackFrame",
+            "kotlinx.coroutines.internal.StackTraceElement",
+            -> return "kotlinx/coroutines/internal/StackTraceRecovery.common.hpp" to null
+            "kotlinx.coroutines.RESUME_TOKEN" -> return "kotlinx/coroutines/CancellableContinuationImpl.hpp" to null
+            "kotlinx.coroutines.delay",
+            "kotlinx.coroutines.awaitCancellation",
+            -> return "kotlinx/coroutines/Delay.hpp" to null
+            "kotlinx.coroutines.yield" -> return "kotlinx/coroutines/Yield.hpp" to null
+            "kotlinx.coroutines.launch",
+            "kotlinx.coroutines.async",
+            "kotlinx.coroutines.withContext",
+            -> return "kotlinx/coroutines/Builders.common.hpp" to null
+            "kotlinx.coroutines.coroutineScope",
+            "kotlinx.coroutines.MainScope",
+            "kotlinx.coroutines.currentCoroutineContext",
+            -> return "kotlinx/coroutines/CoroutineScope.hpp" to null
+            "kotlinx.coroutines.supervisorScope",
+            "kotlinx.coroutines.SupervisorJob",
+            -> return "kotlinx/coroutines/Supervisor.hpp" to null
+            "kotlinx.coroutines.withTimeout",
+            "kotlinx.coroutines.withTimeoutOrNull",
+            -> return "kotlinx/coroutines/Timeout.hpp" to null
+            "kotlinx.coroutines.suspendCancellableCoroutine",
+            "kotlinx.coroutines.suspendCancellableCoroutineReusable",
+            "kotlinx.coroutines.disposeOnCancellation",
+            -> return "kotlinx/coroutines/CancellableContinuation.hpp" to null
+            "kotlinx.coroutines.handleCoroutineException" -> return "kotlinx/coroutines/CoroutineExceptionHandler.hpp" to null
+            "kotlinx.coroutines.awaitAll",
+            "kotlinx.coroutines.joinAll",
+            -> return "kotlinx/coroutines/Await.hpp" to null
+            "kotlinx.coroutines.ensureActive",
+            "kotlinx.coroutines.cancel",
+            "kotlinx.coroutines.cancelAndJoin",
+            "kotlinx.coroutines.cancelChildren",
+            "kotlinx.coroutines.isActive",
+            "kotlinx.coroutines.job",
+            -> return "kotlinx/coroutines/Job.hpp" to null
+            "kotlinx.coroutines.MODE_CANCELLABLE",
+            "kotlinx.coroutines.MODE_ATOMIC",
+            "kotlinx.coroutines.MODE_CANCELLABLE_REUSABLE",
+            "kotlinx.coroutines.MODE_UNDISPATCHED",
+            "kotlinx.coroutines.MODE_UNINITIALIZED",
+            "kotlinx.coroutines.isCancellableMode",
+            "kotlinx.coroutines.isReusableMode",
+            "kotlinx.coroutines.resume",
+            "kotlinx.coroutines.dispatch",
+            -> return "kotlinx/coroutines/DispatchedTask.hpp" to null
+            "kotlinx.coroutines.recoverResult",
+            "kotlinx.coroutines.toState",
+            -> return "kotlinx/coroutines/CompletionState.hpp" to null
+            "kotlinx.coroutines.DEBUG",
+            "kotlinx.coroutines.ASSERTIONS_ENABLED",
+            "kotlinx.coroutines.RECOVER_STACK_TRACES",
+            "kotlinx.coroutines.assert",
+            "kotlinx.coroutines.hexAddress",
+            "kotlinx.coroutines.classSimpleName",
+            -> return "kotlinx/coroutines/Debug.common.hpp" to null
+            "kotlinx.coroutines.selects.whileSelect" -> return "kotlinx/coroutines/selects/WhileSelect.hpp" to null
+            "kotlinx.coroutines.selects.onTimeout" -> return "kotlinx/coroutines/selects/OnTimeout.hpp" to null
+            "kotlinx.coroutines.intrinsics.startCoroutineCancellable" -> return "kotlinx/coroutines/intrinsics/Cancellable.hpp" to null
+            "kotlinx.coroutines.intrinsics.startCoroutineUndispatched",
+            "kotlinx.coroutines.intrinsics.startDirect",
+            "kotlinx.coroutines.intrinsics.startUndispatchedOrReturn",
+            "kotlinx.coroutines.intrinsics.startUndispatchedOrReturnIgnoreTimeout",
+            -> return "kotlinx/coroutines/intrinsics/Undispatched.hpp" to null
         }
         val parts = fqName.split('.')
         if (parts.size < 2) return null to null
-        val secondLast = parts[parts.size - 2]
-        // Handle member/enum-entry import `pkg.Type.MEMBER` -> `pkg/Type.hpp`
-        val headerParts =
-            if (secondLast.firstOrNull()?.isUpperCase() == true) {
-                parts.dropLast(1)
-            } else {
-                parts
+        val firstUpperIdx = parts.indexOfFirst { it.firstOrNull()?.isUpperCase() == true }
+        if (firstUpperIdx < 1) {
+            return null to null
+        }
+        val upperSeg = parts[firstUpperIdx]
+        // ALL_CAPS segments (e.g. `NULL`, `CLOSED`, `NON_CANCELLABLE`) are package constants, not `<Const>.hpp` class files.
+        if (upperSeg.length > 1 && upperSeg.all { it.isUpperCase() || it.isDigit() || it == '_' }) {
+            return null to null
+        }
+        if (parts.first() == "kotlinx") {
+            CppTypeTranslator.lookupKnownHeaderForType(upperSeg)?.let { knownHdr ->
+                return knownHdr to null
             }
+        }
+        // Stop at the top-level enclosing type (`pkg.Channel.Factory.BUFFERED` -> `pkg/Channel.hpp`).
+        val headerParts = parts.subList(0, firstUpperIdx + 1)
         val dirSegments = headerParts.dropLast(1).map { CppNamingPolicy.toNamespaceSegment(it) }
         val stem = CppNamingPolicy.toTypeName(headerParts.last())
         val dir = dirSegments.joinToString("/")
@@ -514,6 +756,7 @@ internal object SameFileSymbolPass {
 
         val superList = FrameAstHelpers.firstChildFrame(stream, declFrame, KtNodeTypes.SUPER_TYPE_LIST_ID)
         val superTypes = ArrayList<Int>()
+        val delegatedSuperTypes = LinkedHashSet<Int>()
         val superCallArgs = LinkedHashMap<Int, Int>()
         if (superList != null) {
             for (child in FrameAstHelpers.childFrames(stream, superList)) {
@@ -541,6 +784,7 @@ internal object SameFileSymbolPass {
                     KtNodeTypes.DELEGATED_SUPER_TYPE_ENTRY_ID -> {
                         FrameAstHelpers.firstChildFrame(stream, child, KtNodeTypes.TYPE_REFERENCE_ID)?.let {
                             superTypes.add(it.frameIndex)
+                            delegatedSuperTypes.add(it.frameIndex)
                         }
                     }
                     else -> Unit
@@ -553,6 +797,7 @@ internal object SameFileSymbolPass {
         val memberClassIndices = ArrayList<Int>()
         val memberFnIndices = ArrayList<Int>()
         val memberPropIndices = ArrayList<Int>()
+        val initBlockIndices = ArrayList<Int>()
         var companionIdx: Int? = null
 
         val rawClassKind = classifyRawClassKind(stream, declFrame, isCompanion)
@@ -603,6 +848,7 @@ internal object SameFileSymbolPass {
                     }
                     KtNodeTypes.FUN_ID -> memberFnIndices.add(member.frameIndex)
                     KtNodeTypes.PROPERTY_ID -> memberPropIndices.add(member.frameIndex)
+                    KtNodeTypes.CLASS_INITIALIZER_ID -> initBlockIndices.add(member.frameIndex)
                     else -> Unit
                 }
             }
@@ -623,12 +869,16 @@ internal object SameFileSymbolPass {
         // Determine class header vs cpp constructor placement:
         // Non-template regular/sealed classes with explicit primary constructor params emit out-of-line ctor in .cpp
         // when the class is a top-level concrete class (matching `Symbol.hpp` + `Symbol.cpp`).
-        var classFlags = declFrame.flags or PacketFlags.EMIT_IN_HPP_DECL or PacketFlags.EMIT_PROVENANCE_COMMENT
+        var classFlags = declFrame.flags or PacketFlags.EMIT_IN_HPP_DECL
+        val hasNonEmptySuperArgs =
+            superCallArgs.values.any { argListIdx ->
+                FrameAstHelpers.childFramesOfType(stream, stream.frames[argListIdx], KtNodeTypes.VALUE_ARGUMENT_ID).isNotEmpty()
+            }
         val emitOutOfLineCtor =
             !hasTemplates &&
                 enclosingClassFrameIndex == null &&
                 (finalKind == KtClassKind.REGULAR_CLASS || finalKind == KtClassKind.SEALED_CLASS) &&
-                ctorParams.isNotEmpty()
+                (ctorParams.isNotEmpty() || initBlockIndices.isNotEmpty() || hasNonEmptySuperArgs)
         classFlags =
             if (emitOutOfLineCtor) {
                 classFlags or PacketFlags.EMIT_IN_CPP_BODY
@@ -654,11 +904,13 @@ internal object SameFileSymbolPass {
                 typeParams = typeParams,
                 primaryConstructorParams = ctorParams,
                 superTypeFrameIndices = superTypes,
+                delegatedSuperTypeFrameIndices = delegatedSuperTypes,
                 superCallArgsBySuperIndex = superCallArgs,
                 enumEntries = enumEntries,
                 memberClassFrameIndices = memberClassIndices,
                 memberFunctionFrameIndices = memberFnIndices,
                 memberPropertyFrameIndices = memberPropIndices,
+                initBlockFrameIndices = initBlockIndices,
                 companionFrameIndex = companionIdx,
                 annotations = annotations,
                 flags = classFlags,
@@ -805,7 +1057,7 @@ internal object SameFileSymbolPass {
         val isInfix = FrameAstHelpers.hasModifierKeyword(stream, fnFrame, KtTokens.INFIX_MODIFIER_ID)
         val isExternal = FrameAstHelpers.hasModifierKeyword(stream, fnFrame, KtTokens.EXTERNAL_MODIFIER_ID)
 
-        var flags = fnFrame.flags or PacketFlags.EMIT_IN_HPP_DECL or PacketFlags.EMIT_PROVENANCE_COMMENT
+        var flags = fnFrame.flags or PacketFlags.EMIT_IN_HPP_DECL
         if (cAbiSymbol != null) {
             flags = flags or PacketFlags.FFI_C_ABI_SYMBOL
         }
@@ -813,9 +1065,23 @@ internal object SameFileSymbolPass {
             flags = flags or PacketFlags.MOD_EXTERNAL_OR_EXTENSION
         }
 
-        val isTemplate = enclosingHasTypeParams || typeParams.isNotEmpty()
+        val isVirtualLike =
+            enclosingClass?.kind == KtClassKind.INTERFACE ||
+                PacketFlags.hasFlag(flags, PacketFlags.MOD_OVERRIDE) ||
+                PacketFlags.hasFlag(flags, PacketFlags.MOD_OPEN) ||
+                PacketFlags.hasFlag(flags, PacketFlags.MOD_ABSTRACT)
+        val hasStarProjectionTemplate =
+            !isVirtualLike &&
+                cAbiSymbol == null &&
+                (
+                    (receiverFrame != null && frameHasNonVoidPtrStarProjection(stream, receiverFrame)) ||
+                        valueParams.any { vp ->
+                            vp.typeFrameIndex != null &&
+                                frameHasNonVoidPtrStarProjection(stream, stream.frames[vp.typeFrameIndex])
+                        }
+                )
+        val isTemplate = enclosingHasTypeParams || typeParams.isNotEmpty() || hasStarProjectionTemplate
         val isInline = PacketFlags.hasFlag(flags, PacketFlags.MOD_INLINE)
-        val isSuspend = PacketFlags.hasFlag(flags, PacketFlags.MOD_SUSPEND)
         val isPureDeclaration = bodyFrame == null
         val isNestedMemberClass = enclosingClass?.enclosingClassFrameIndex != null
         val isRichEnumHelper = enclosingClass?.kind == KtClassKind.RICH_ENUM
@@ -825,7 +1091,7 @@ internal object SameFileSymbolPass {
         flags =
             when {
                 isPureDeclaration -> flags
-                isTemplate || isInline || isSuspend || isNestedMemberClass || isRichEnumHelper || isValueOrDataClass ->
+                isTemplate || isInline || isNestedMemberClass || isRichEnumHelper || isValueOrDataClass ->
                     flags or PacketFlags.EMIT_IN_HPP_INLINE_BODY
                 else -> flags or PacketFlags.EMIT_IN_CPP_BODY
             }
@@ -882,6 +1148,13 @@ internal object SameFileSymbolPass {
             identPkt.targetCppName = cppName
         }
 
+        val typeParams = FrameAstHelpers.extractTypeParams(stream, propFrame)
+        for (tp in typeParams) {
+            FrameAstHelpers.directIdentPacket(stream, stream.frames[tp.frameIndex])?.let { pkt ->
+                pkt.role = SymbolRole.TYPE_PARAM
+                pkt.targetCppName = tp.name
+            }
+        }
         val (receiverFrame, returnFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, propFrame)
         val initFrame = FrameAstHelpers.extractInitializerAfterEquals(stream, propFrame)
         var getterIdx: Int? = null
@@ -894,12 +1167,12 @@ internal object SameFileSymbolPass {
             }
         }
 
-        var flags = propFrame.flags or PacketFlags.EMIT_IN_HPP_DECL or PacketFlags.EMIT_PROVENANCE_COMMENT
+        var flags = propFrame.flags or PacketFlags.EMIT_IN_HPP_DECL
         if (receiverFrame != null) {
             flags = flags or PacketFlags.MOD_EXTERNAL_OR_EXTENSION
         }
         flags =
-            if (enclosingHasTypeParams || isConst || enclosingClass != null || (getterIdx == null && setterIdx == null)) {
+            if (enclosingHasTypeParams || typeParams.isNotEmpty() || isConst || enclosingClass != null || (getterIdx == null && setterIdx == null)) {
                 flags or PacketFlags.EMIT_IN_HPP_INLINE_BODY
             } else {
                 flags or PacketFlags.EMIT_IN_CPP_BODY
@@ -913,6 +1186,7 @@ internal object SameFileSymbolPass {
             cppName = cppName,
             frameIndex = propFrame.frameIndex,
             enclosingClassFrameIndex = enclosingClass?.frameIndex,
+            typeParams = typeParams,
             isVar = isVar,
             isConst = isConst,
             receiverTypeFrameIndex = receiverFrame?.frameIndex,
@@ -940,7 +1214,7 @@ internal object SameFileSymbolPass {
         val targetType = FrameAstHelpers.firstChildFrame(stream, aliasFrame, KtNodeTypes.TYPE_REFERENCE_ID)
         aliasFrame.flags =
             aliasFrame.flags or PacketFlags.EMIT_IN_HPP_DECL or
-            PacketFlags.EMIT_IN_HPP_INLINE_BODY or PacketFlags.EMIT_PROVENANCE_COMMENT
+            PacketFlags.EMIT_IN_HPP_INLINE_BODY
         aliasFrame.semanticInfo =
             (aliasFrame.semanticInfo ?: FrameSemanticInfo()).copy(symbolName = cppName)
         return KtTypeAliasSymbol(
@@ -1027,13 +1301,23 @@ internal object SameFileSymbolPass {
         return forwardNeeded.toList()
     }
 
+    private val PRESERVED_MULTIPLATFORM_SUFFIXES: List<String> =
+        listOf(
+            ".common_native",
+            ".concurrent",
+            ".common",
+            ".native",
+            ".darwin",
+            ".apple",
+            ".other",
+        )
+
     private val IGNORED_IMPORT_PREFIXES: List<String> =
         listOf(
             "kotlin.jvm.",
             "kotlin.js.",
             "kotlin.contracts.",
             "kotlin.experimental.",
-            "kotlin.native.concurrent.",
             "kotlinx.cinterop.",
             "kotlinx.atomicfu.",
         )

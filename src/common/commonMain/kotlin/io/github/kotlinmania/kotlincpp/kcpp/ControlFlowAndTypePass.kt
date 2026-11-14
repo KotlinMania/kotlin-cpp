@@ -396,8 +396,19 @@ internal object ControlFlowAndTypePass {
             val tr = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.TYPE_REFERENCE_ID)
             val opRef = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.OPERATION_REFERENCE_ID)
             val isNeg = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.NOT_IS_ID
-            if (lhs != null && lhs.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID && tr != null) {
-                val varName = FrameAstHelpers.directIdentPacket(stream, lhs)?.unescapedName ?: return
+            if (lhs != null && tr != null) {
+                val varName =
+                    when (lhs.nodeTypeId) {
+                        KtNodeTypes.REFERENCE_EXPRESSION_ID -> FrameAstHelpers.directIdentPacket(stream, lhs)?.unescapedName
+                        KtNodeTypes.THIS_EXPRESSION_ID -> "this"
+                        else -> null
+                    } ?: return
+                val narrowedCpp =
+                    if (varName == "this") {
+                        "this_val_narrowed"
+                    } else {
+                        "${CppNamingPolicy.toSnakeCase(varName)}_narrowed"
+                    }
                 expr.flags = expr.flags or PacketFlags.SMART_CAST_SUBTYPE
                 val targetBranch = if (!isNeg) thenWrap else elseWrap
                 if (targetBranch != null) {
@@ -407,7 +418,7 @@ internal object ControlFlowAndTypePass {
                             SmartCastBinding(
                                 scopeFrameIndex = targetBranch.frameIndex,
                                 kotlinVarName = varName,
-                                narrowedCppName = "${CppNamingPolicy.toSnakeCase(varName)}_narrowed",
+                                narrowedCppName = narrowedCpp,
                                 targetTypeFrameIndex = tr.frameIndex,
                                 isNegated = false,
                             ),

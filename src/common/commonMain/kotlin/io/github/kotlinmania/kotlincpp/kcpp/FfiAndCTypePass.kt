@@ -405,11 +405,11 @@ internal object FfiAndCTypePass {
         val trailing =
             FrameAstHelpers
                 .firstChildFrame(stream, callFrame, KtNodeTypes.LAMBDA_ARGUMENT_ID)
-                ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
+                ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
         if (trailing != null) return trailing
         val argList = FrameAstHelpers.firstChildFrame(stream, callFrame, KtNodeTypes.VALUE_ARGUMENT_LIST_ID) ?: return null
         val lastVa = FrameAstHelpers.childFramesOfType(stream, argList, KtNodeTypes.VALUE_ARGUMENT_ID).lastOrNull() ?: return null
-        return FrameAstHelpers.firstChildFrame(stream, lastVa, KtNodeTypes.LAMBDA_EXPRESSION_ID)
+        return FrameAstHelpers.unwrapLambdaExpression(stream, lastVa)
     }
 
     private fun extractLambdaBody(

@@ -78,12 +78,11 @@ public object PacketFlags {
     public const val DIVERGING_EXPR: Long = 1L shl 56
     public const val KOTLIN_RESULT_CHANNEL: Long = 1L shl 57
 
-    // Bits 58..62: Header/Source Co-Location & Provenance
+    // Bits 58..61: Header/Source Co-Location
     public const val EMIT_IN_HPP_DECL: Long = 1L shl 58
     public const val EMIT_IN_HPP_INLINE_BODY: Long = 1L shl 59
     public const val EMIT_IN_CPP_BODY: Long = 1L shl 60
     public const val NEEDS_FORWARD_DECL: Long = 1L shl 61
-    public const val EMIT_PROVENANCE_COMMENT: Long = 1L shl 62
     public const val MOD_EXTERNAL_OR_EXTENSION: Long = 1L shl 63
 
     public fun hasFlag(

@@ -88,7 +88,7 @@ internal object AtomicAndThreadLocalPass {
             val initIdx = propSym.initializerFrameIndex
             if (initIdx != null) {
                 val initFrame = stream.frames[initIdx]
-                parseAtomicInitializer(stream, propSym, propFrame, initFrame)?.let { info ->
+                parseAtomicInitializer(stream, symbols, propSym, propFrame, initFrame)?.let { info ->
                     atomicByProp[propSym.frameIndex] = info
                     atomicByName[propSym.kotlinName] = info
                 }
@@ -138,7 +138,7 @@ internal object AtomicAndThreadLocalPass {
                         annotations = emptyList(),
                         flags = frame.flags,
                     )
-                parseAtomicInitializer(stream, dummySym, frame, initFrame)?.let { info ->
+                parseAtomicInitializer(stream, symbols, dummySym, frame, initFrame)?.let { info ->
                     atomicByProp[frame.frameIndex] = info
                     if (info.kotlinName !in atomicByName) {
                         atomicByName[info.kotlinName] = info
@@ -168,17 +168,25 @@ internal object AtomicAndThreadLocalPass {
 
     private fun parseAtomicInitializer(
         stream: PacketStream,
+        symbols: SameFileSymbolTable,
         propSym: KtPropertySymbol,
         propFrame: PacketFrame,
         initFrame: PacketFrame,
     ): AtomicFieldInfo? {
-        if (initFrame.nodeTypeId != KtNodeTypes.CALL_EXPRESSION_ID) return null
-        val calleeRef = FrameAstHelpers.firstChildFrame(stream, initFrame, KtNodeTypes.REFERENCE_EXPRESSION_ID)
+        val callFrame = unwrapQualifiedCall(stream, initFrame) ?: return null
+        val calleeRef = FrameAstHelpers.firstChildFrame(stream, callFrame, KtNodeTypes.REFERENCE_EXPRESSION_ID)
         val callee = calleeRef?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }.orEmpty()
-        if (callee != "atomic" && callee != "atomicArrayOfNulls") return null
+        if (callee != "atomic" &&
+            callee != "atomicArrayOfNulls" &&
+            callee != "AtomicReference" &&
+            callee != "AtomicInt" &&
+            callee != "AtomicLong"
+        ) {
+            return null
+        }
 
-        val explicitElemType = extractFirstTypeArgFrame(stream, initFrame)
-        val argList = FrameAstHelpers.firstChildFrame(stream, initFrame, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
+        val explicitElemType = extractFirstTypeArgFrame(stream, callFrame)
+        val argList = FrameAstHelpers.firstChildFrame(stream, callFrame, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
         val firstArgExpr =
             argList
                 ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.VALUE_ARGUMENT_ID) }
@@ -200,7 +208,7 @@ internal object AtomicAndThreadLocalPass {
         }
 
         propFrame.flags = propFrame.flags or PacketFlags.ATOMICFU_FIELD
-        val (inferredType, isRef) = inferAtomicElementType(stream, explicitElemType, firstArgExpr)
+        val (inferredType, isRef) = inferAtomicElementType(stream, symbols, propSym, explicitElemType, firstArgExpr)
         return AtomicFieldInfo(
             propFrameIndex = propSym.frameIndex,
             kotlinName = propSym.kotlinName,
@@ -216,6 +224,8 @@ internal object AtomicAndThreadLocalPass {
 
     private fun inferAtomicElementType(
         stream: PacketStream,
+        symbols: SameFileSymbolTable,
+        propSym: KtPropertySymbol,
         explicitTypeFrame: PacketFrame?,
         initExprFrame: PacketFrame?,
     ): Pair<String?, Boolean> {
@@ -224,8 +234,114 @@ internal object AtomicAndThreadLocalPass {
             val isRef = base == null || base !in setOf("Int", "Long", "Boolean", "UInt", "ULong", "Byte", "Short")
             return null to isRef
         }
-        if (initExprFrame == null) return "void*" to true
-        val firstPkt = stream.packets.getOrNull(initExprFrame.firstPacketIndex)
+        return inferExprScalarType(stream, symbols, propSym, initExprFrame)
+    }
+
+    private fun inferExprScalarType(
+        stream: PacketStream,
+        symbols: SameFileSymbolTable,
+        propSym: KtPropertySymbol,
+        exprFrame: PacketFrame?,
+    ): Pair<String?, Boolean> {
+        if (exprFrame == null) return "void*" to true
+        when (exprFrame.nodeTypeId) {
+            KtNodeTypes.PARENTHESIZED_ID -> {
+                val inner = FrameAstHelpers.childFrames(stream, exprFrame).firstOrNull()
+                return inferExprScalarType(stream, symbols, propSym, inner)
+            }
+            KtNodeTypes.PREFIX_EXPRESSION_ID -> {
+                val inner = FrameAstHelpers.childFrames(stream, exprFrame).lastOrNull()
+                val opPkt = stream.packets.getOrNull(exprFrame.firstPacketIndex)
+                if (opPkt is SyntaxPacket.OperatorPacket && opPkt.operatorId == KtTokens.EXCL_ID) {
+                    return "bool" to false
+                }
+                return inferExprScalarType(stream, symbols, propSym, inner)
+            }
+            KtNodeTypes.BINARY_EXPRESSION_ID -> {
+                val kids = FrameAstHelpers.childFrames(stream, exprFrame)
+                if (kids.size >= 3) {
+                    val opFrame = kids[1]
+                    val opId = FrameAstHelpers.operationTokenId(stream, opFrame)
+                    val opText = FrameAstHelpers.directIdentPacket(stream, opFrame)?.unescapedName
+                    val comparisonOps =
+                        setOf(
+                            KtTokens.EQEQ_ID,
+                            KtTokens.EXCLEQ_ID,
+                            KtTokens.EQEQEQ_ID,
+                            KtTokens.EXCLEQEQEQ_ID,
+                            KtTokens.LT_ID,
+                            KtTokens.LTEQ_ID,
+                            KtTokens.GT_ID,
+                            KtTokens.GTEQ_ID,
+                            KtTokens.ANDAND_ID,
+                            KtTokens.OROR_ID,
+                        )
+                    if (opId in comparisonOps) {
+                        return "bool" to false
+                    }
+                    val arithmeticOps =
+                        setOf(
+                            KtTokens.PLUS_ID,
+                            KtTokens.MINUS_ID,
+                            KtTokens.MUL_ID,
+                            KtTokens.DIV_ID,
+                            KtTokens.PERC_ID,
+                        )
+                    if (opId in arithmeticOps || opText in setOf("shl", "shr", "ushr", "and", "or", "xor")) {
+                        val (lhsT, _) = inferExprScalarType(stream, symbols, propSym, kids[0])
+                        val (rhsT, _) = inferExprScalarType(stream, symbols, propSym, kids[2])
+                        val is64 =
+                            lhsT == "std::int64_t" || lhsT == "std::uint64_t" ||
+                                (opText !in setOf("shl", "shr", "ushr") && (rhsT == "std::int64_t" || rhsT == "std::uint64_t"))
+                        val isUnsigned = lhsT?.startsWith("std::uint") == true
+                        val cpp =
+                            when {
+                                is64 && isUnsigned -> "std::uint64_t"
+                                is64 -> "std::int64_t"
+                                isUnsigned -> "std::uint32_t"
+                                else -> "std::int32_t"
+                            }
+                        return cpp to false
+                    }
+                }
+            }
+            KtNodeTypes.REFERENCE_EXPRESSION_ID -> {
+                val refName = FrameAstHelpers.directIdentPacket(stream, exprFrame)?.unescapedName
+                if (refName != null) {
+                    val encCls = propSym.enclosingClassFrameIndex?.let { symbols.classesByFrame[it] }
+                    val ctorParam = encCls?.primaryConstructorParams?.firstOrNull { it.name == refName }
+                    val paramTypeBase =
+                        ctorParam?.typeFrameIndex?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it]) }
+                    when (paramTypeBase) {
+                        "Boolean" -> return "bool" to false
+                        "Byte" -> return "std::int8_t" to false
+                        "Short" -> return "std::int16_t" to false
+                        "Int" -> return "std::int32_t" to false
+                        "Long" -> return "std::int64_t" to false
+                        "UByte" -> return "std::uint8_t" to false
+                        "UShort" -> return "std::uint16_t" to false
+                        "UInt" -> return "std::uint32_t" to false
+                        "ULong" -> return "std::uint64_t" to false
+                    }
+                    val sameFileProp = symbols.propertiesByName[refName]
+                    if (sameFileProp != null && sameFileProp.frameIndex != propSym.frameIndex) {
+                        val propTypeBase =
+                            sameFileProp.returnTypeFrameIndex?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it]) }
+                        when (propTypeBase) {
+                            "Boolean" -> return "bool" to false
+                            "Int" -> return "std::int32_t" to false
+                            "Long" -> return "std::int64_t" to false
+                            "UInt" -> return "std::uint32_t" to false
+                            "ULong" -> return "std::uint64_t" to false
+                        }
+                        if (sameFileProp.initializerFrameIndex != null) {
+                            return inferExprScalarType(stream, symbols, sameFileProp, stream.frames[sameFileProp.initializerFrameIndex])
+                        }
+                    }
+                }
+            }
+        }
+        val firstPkt = stream.packets.getOrNull(exprFrame.firstPacketIndex)
         if (firstPkt is SyntaxPacket.LiteralPacket) {
             return when (firstPkt.literalKind) {
                 LiteralPacketKind.BOOLEAN -> "bool" to false
@@ -263,7 +379,7 @@ internal object AtomicAndThreadLocalPass {
         val trailingLambda =
             FrameAstHelpers
                 .firstChildFrame(stream, initFrame, KtNodeTypes.LAMBDA_ARGUMENT_ID)
-                ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
+                ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
         return ThreadLocalSlotInfo(
             propFrameIndex = propSym.frameIndex,
             kotlinName = propSym.kotlinName,
@@ -356,7 +472,7 @@ internal object AtomicAndThreadLocalPass {
                             val trailingLambda =
                                 FrameAstHelpers
                                     .firstChildFrame(stream, sel, KtNodeTypes.LAMBDA_ARGUMENT_ID)
-                                    ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
+                                    ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
                             val curParam =
                                 trailingLambda?.let { extractSingleLambdaParam(stream, it) } ?: "it"
                             val useKonanCas =
@@ -453,6 +569,18 @@ internal object AtomicAndThreadLocalPass {
     ): PacketFrame? {
         for (child in FrameAstHelpers.childFrames(stream, vaFrame)) {
             if (child.nodeTypeId != KtNodeTypes.VALUE_ARGUMENT_NAME_ID) return child
+        }
+        return null
+    }
+
+    private fun unwrapQualifiedCall(
+        stream: PacketStream,
+        exprFrame: PacketFrame,
+    ): PacketFrame? {
+        if (exprFrame.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) return exprFrame
+        if (exprFrame.nodeTypeId == KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID) {
+            val parts = FrameAstHelpers.childFrames(stream, exprFrame)
+            if (parts.size == 2) return unwrapQualifiedCall(stream, parts[1])
         }
         return null
     }

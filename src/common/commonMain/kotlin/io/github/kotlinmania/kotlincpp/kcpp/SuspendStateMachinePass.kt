@@ -22,6 +22,7 @@ internal enum class BuiltinInlineKind {
     USE,
     REPEAT,
     WITH_LOCK,
+    SYNCHRONIZED,
     FOR_EACH,
     SAME_FILE_INLINE_FUN,
 }
@@ -79,7 +80,7 @@ internal object SuspendStateMachinePass {
         val sameFileInlineFunsByName =
             symbols.functionsByFrame.values
                 .filter { PacketFlags.hasFlag(it.flags, PacketFlags.MOD_INLINE) }
-                .associateBy { it.kotlinName }
+                .groupBy { it.kotlinName }
 
         // 1. Inspect every function & property body to validate suspend legality, detect leaf intrinsics,
         //    propagate HAS_SUSPEND_IN_SUBTREE, plan inline expansions, and hoist evaluation-order args.
@@ -91,7 +92,7 @@ internal object SuspendStateMachinePass {
                 fnFrame.flags = fnFrame.flags or PacketFlags.RESTRICTS_SUSPENSION_SCOPE
             }
 
-            val suspendCallableParams = collectSuspendCallableParamNames(stream, fnSym)
+            val callableBindings = collectCallableParamBindings(stream, fnSym, symbols)
             val restrictedMemberNames =
                 if (restrictedReceiver != null) {
                     collectRestrictedMemberNames(symbols, restrictedReceiver)
@@ -114,27 +115,51 @@ internal object SuspendStateMachinePass {
                 }
             }
 
+            val retTypeFrame = fnSym.returnTypeFrameIndex?.let { stream.frames[it] }
+            val returnsSuspendLambda = retTypeFrame != null && isSuspendFunctionTypeFrame(stream, retTypeFrame)
+            val retRestrictedType =
+                retTypeFrame
+                    ?.let { extractFunctionReceiverTypeName(stream, it) }
+                    ?.takeIf { it in symbols.restrictsSuspensionTypeNames }
+
             val ctx =
                 SuspendAnalysisContext(
                     stream = stream,
                     symbols = symbols,
                     sameFileSuspendFuns = sameFileSuspendFuns,
                     sameFileInlineFunsByName = sameFileInlineFunsByName,
-                    suspendCallableVars = suspendCallableParams,
+                    suspendCallableVars = callableBindings.suspendVars,
+                    callableVarsTakingSuspendLambda = callableBindings.takingSuspendLambdaVars,
+                    nonSuspendCallableVars = callableBindings.nonSuspendCallableVars,
                     enclosingFunctionIsSuspend = isSuspendFn,
                     lambdaSuspendAllowed = isSuspendFn,
                     inCrossinlineLambda = false,
                     inNonInlineOrdinaryLambda = false,
+                    returnTypeIsSuspendLambda = returnsSuspendLambda,
+                    returnRestrictedReceiverType = retRestrictedType,
                     restrictedReceiverType = restrictedReceiver,
                     restrictedAllowedCalls = restrictedMemberNames,
                     enclosingFnName = fnSym.kotlinName,
+                    enclosingFnFrameIndex = fnSym.frameIndex,
                     suspendCallFrames = suspendCallFrames,
                     hoistedByExpr = hoistedByExpr,
                     hoistedBeforeStmt = hoistedBeforeStmt,
                     inlineExpansions = inlineExpansions,
                     nextHoistIndex = { hoistCounter++ },
                 )
-            val bodyHasSuspend = analyzeSubtree(bodyFrame, enclosingStmtFrameIndex = bodyFrame.frameIndex, ctx = ctx)
+            val exprBodyLambda =
+                if (returnsSuspendLambda) {
+                    FrameAstHelpers.unwrapLambdaExpression(stream, bodyFrame)
+                } else {
+                    null
+                }
+            val bodyHasSuspend =
+                if (exprBodyLambda != null) {
+                    analyzeSuspendTypedLambdaValue(exprBodyLambda, retRestrictedType, ctx)
+                    false
+                } else {
+                    analyzeSubtree(bodyFrame, enclosingStmtFrameIndex = bodyFrame.frameIndex, ctx = ctx)
+                }
             if (bodyHasSuspend) {
                 fnFrame.flags = fnFrame.flags or PacketFlags.HAS_SUSPEND_IN_SUBTREE
             }
@@ -142,8 +167,15 @@ internal object SuspendStateMachinePass {
 
         // Also check top-level/class property initializers & accessors so illegal suspend calls in initializers fail loud.
         for (propSym in symbols.propertiesByFrame.values) {
+            val propTypeFrame = propSym.returnTypeFrameIndex?.let { stream.frames[it] }
+            val propIsSuspendLambda = propTypeFrame != null && isSuspendFunctionTypeFrame(stream, propTypeFrame)
+            val propRestricted =
+                propTypeFrame
+                    ?.let { extractFunctionReceiverTypeName(stream, it) }
+                    ?.takeIf { it in symbols.restrictsSuspensionTypeNames }
             val framesToCheck = listOfNotNull(propSym.initializerFrameIndex, propSym.getterFrameIndex, propSym.setterFrameIndex)
             for (fIdx in framesToCheck) {
+                val isSetter = fIdx == propSym.setterFrameIndex
                 val ctx =
                     SuspendAnalysisContext(
                         stream = stream,
@@ -151,10 +183,14 @@ internal object SuspendStateMachinePass {
                         sameFileSuspendFuns = sameFileSuspendFuns,
                         sameFileInlineFunsByName = sameFileInlineFunsByName,
                         suspendCallableVars = emptySet(),
+                        callableVarsTakingSuspendLambda = emptySet(),
+                        nonSuspendCallableVars = emptySet(),
                         enclosingFunctionIsSuspend = false,
                         lambdaSuspendAllowed = false,
                         inCrossinlineLambda = false,
                         inNonInlineOrdinaryLambda = false,
+                        returnTypeIsSuspendLambda = propIsSuspendLambda && !isSetter,
+                        returnRestrictedReceiverType = if (!isSetter) propRestricted else null,
                         restrictedReceiverType = null,
                         restrictedAllowedCalls = emptySet(),
                         enclosingFnName = propSym.kotlinName,
@@ -164,7 +200,24 @@ internal object SuspendStateMachinePass {
                         inlineExpansions = inlineExpansions,
                         nextHoistIndex = { hoistCounter++ },
                     )
-                analyzeSubtree(stream.frames[fIdx], enclosingStmtFrameIndex = fIdx, ctx = ctx)
+                val checkFrame = stream.frames[fIdx]
+                val directSuspLam =
+                    if (propIsSuspendLambda && !isSetter) {
+                        if (checkFrame.nodeTypeId == KtNodeTypes.PROPERTY_ACCESSOR_ID) {
+                            FrameAstHelpers
+                                .extractInitializerAfterEquals(stream, checkFrame)
+                                ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
+                        } else {
+                            FrameAstHelpers.unwrapLambdaExpression(stream, checkFrame)
+                        }
+                    } else {
+                        null
+                    }
+                if (directSuspLam != null) {
+                    analyzeSuspendTypedLambdaValue(directSuspLam, propRestricted, ctx)
+                } else {
+                    analyzeSubtree(checkFrame, enclosingStmtFrameIndex = fIdx, ctx = ctx)
+                }
             }
         }
 
@@ -182,21 +235,59 @@ internal object SuspendStateMachinePass {
         val stream: PacketStream,
         val symbols: SameFileSymbolTable,
         val sameFileSuspendFuns: Set<String>,
-        val sameFileInlineFunsByName: Map<String, KtFunctionSymbol>,
+        val sameFileInlineFunsByName: Map<String, List<KtFunctionSymbol>>,
         val suspendCallableVars: Set<String>,
+        val callableVarsTakingSuspendLambda: Set<String>,
+        val nonSuspendCallableVars: Set<String>,
         val enclosingFunctionIsSuspend: Boolean,
         val lambdaSuspendAllowed: Boolean,
         val inCrossinlineLambda: Boolean,
         val inNonInlineOrdinaryLambda: Boolean,
+        val inSelectBuilderScope: Boolean = false,
+        val returnTypeIsSuspendLambda: Boolean = false,
+        val returnRestrictedReceiverType: String? = null,
         val restrictedReceiverType: String?,
         val restrictedAllowedCalls: Set<String>,
         val enclosingFnName: String,
+        val enclosingFnFrameIndex: Int? = null,
         val suspendCallFrames: MutableSet<Int>,
         val hoistedByExpr: MutableMap<Int, HoistedEvalTemp>,
         val hoistedBeforeStmt: MutableMap<Int, MutableList<HoistedEvalTemp>>,
         val inlineExpansions: MutableMap<Int, InlineCallExpansion>,
         val nextHoistIndex: () -> Int,
     ) {
+        fun withExtraSuspendVar(varName: String): SuspendAnalysisContext {
+            if (varName in suspendCallableVars) return this
+            val out = LinkedHashSet<String>(suspendCallableVars.size + 1)
+            out.addAll(suspendCallableVars)
+            out.add(varName)
+            return SuspendAnalysisContext(
+                stream = stream,
+                symbols = symbols,
+                sameFileSuspendFuns = sameFileSuspendFuns,
+                sameFileInlineFunsByName = sameFileInlineFunsByName,
+                suspendCallableVars = out,
+                callableVarsTakingSuspendLambda = callableVarsTakingSuspendLambda,
+                nonSuspendCallableVars = nonSuspendCallableVars,
+                enclosingFunctionIsSuspend = enclosingFunctionIsSuspend,
+                lambdaSuspendAllowed = lambdaSuspendAllowed,
+                inCrossinlineLambda = inCrossinlineLambda,
+                inNonInlineOrdinaryLambda = inNonInlineOrdinaryLambda,
+                inSelectBuilderScope = inSelectBuilderScope,
+                returnTypeIsSuspendLambda = returnTypeIsSuspendLambda,
+                returnRestrictedReceiverType = returnRestrictedReceiverType,
+                restrictedReceiverType = restrictedReceiverType,
+                restrictedAllowedCalls = restrictedAllowedCalls,
+                enclosingFnName = enclosingFnName,
+                enclosingFnFrameIndex = enclosingFnFrameIndex,
+                suspendCallFrames = suspendCallFrames,
+                hoistedByExpr = hoistedByExpr,
+                hoistedBeforeStmt = hoistedBeforeStmt,
+                inlineExpansions = inlineExpansions,
+                nextHoistIndex = nextHoistIndex,
+            )
+        }
+
         fun copyForLambda(
             allowSuspend: Boolean,
             crossinline: Boolean,
@@ -204,6 +295,7 @@ internal object SuspendStateMachinePass {
             restrictedType: String?,
             restrictedMembers: Set<String>,
             extraSuspendVars: Set<String> = emptySet(),
+            selectBuilderScope: Boolean = false,
         ): SuspendAnalysisContext {
             val mergedVars =
                 if (extraSuspendVars.isEmpty()) {
@@ -220,20 +312,50 @@ internal object SuspendStateMachinePass {
                 sameFileSuspendFuns = sameFileSuspendFuns,
                 sameFileInlineFunsByName = sameFileInlineFunsByName,
                 suspendCallableVars = mergedVars,
+                callableVarsTakingSuspendLambda = callableVarsTakingSuspendLambda,
+                nonSuspendCallableVars = nonSuspendCallableVars,
                 enclosingFunctionIsSuspend = enclosingFunctionIsSuspend || allowSuspend,
                 lambdaSuspendAllowed = allowSuspend,
                 inCrossinlineLambda = crossinline,
                 inNonInlineOrdinaryLambda = nonInlineOrdinary,
+                inSelectBuilderScope = selectBuilderScope,
+                returnTypeIsSuspendLambda = false,
+                returnRestrictedReceiverType = null,
                 restrictedReceiverType = restrictedType ?: restrictedReceiverType,
                 restrictedAllowedCalls =
                     if (restrictedType != null) restrictedMembers else restrictedAllowedCalls,
                 enclosingFnName = enclosingFnName,
+                enclosingFnFrameIndex = enclosingFnFrameIndex,
                 suspendCallFrames = suspendCallFrames,
                 hoistedByExpr = hoistedByExpr,
                 hoistedBeforeStmt = hoistedBeforeStmt,
                 inlineExpansions = inlineExpansions,
                 nextHoistIndex = nextHoistIndex,
             )
+        }
+    }
+
+    private fun analyzeSuspendTypedLambdaValue(
+        lambdaFrame: PacketFrame,
+        restrictedType: String?,
+        ctx: SuspendAnalysisContext,
+    ) {
+        val restrictedMembers =
+            if (restrictedType != null) {
+                collectRestrictedMemberNames(ctx.symbols, restrictedType)
+            } else {
+                emptySet()
+            }
+        val suspLamCtx =
+            ctx.copyForLambda(
+                allowSuspend = true,
+                crossinline = false,
+                nonInlineOrdinary = false,
+                restrictedType = restrictedType,
+                restrictedMembers = restrictedMembers,
+            )
+        for (child in FrameAstHelpers.childFrames(ctx.stream, lambdaFrame)) {
+            analyzeSubtree(child, enclosingStmtFrameIndex = child.frameIndex, ctx = suspLamCtx)
         }
     }
 
@@ -254,8 +376,57 @@ internal object SuspendStateMachinePass {
 
             KtNodeTypes.BLOCK_ID -> {
                 var anySuspend = false
+                var blockCtx = ctx
                 for (child in FrameAstHelpers.childFrames(stream, frame)) {
-                    val childHas = analyzeSubtree(child, enclosingStmtFrameIndex = child.frameIndex, ctx = ctx)
+                    if (child.nodeTypeId == KtNodeTypes.PROPERTY_ID) {
+                        val (_, propTypeFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, child)
+                        val initExpr = FrameAstHelpers.extractInitializerAfterEquals(stream, child)
+                        val isSuspendBuilderInit =
+                            initExpr?.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID &&
+                                extractCalleeSimpleName(stream, initExpr) == "suspend" &&
+                                FrameAstHelpers.firstChildFrame(stream, initExpr, KtNodeTypes.LAMBDA_ARGUMENT_ID) != null
+                        val isSuspProp =
+                            (propTypeFrame != null && isSuspendFunctionTypeFrame(stream, propTypeFrame)) || isSuspendBuilderInit
+                        if (isSuspProp) {
+                            val unwrappedLam = initExpr?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
+                            if (unwrappedLam != null) {
+                                val suspLamCtx =
+                                    blockCtx.copyForLambda(
+                                        allowSuspend = true,
+                                        crossinline = false,
+                                        nonInlineOrdinary = false,
+                                        restrictedType =
+                                            propTypeFrame
+                                                ?.let { extractFunctionReceiverTypeName(stream, it) }
+                                                ?.takeIf { it in blockCtx.symbols.restrictsSuspensionTypeNames },
+                                        restrictedMembers = emptySet(),
+                                    )
+                                for (lc in FrameAstHelpers.childFrames(stream, unwrappedLam)) {
+                                    analyzeSubtree(lc, enclosingStmtFrameIndex = lc.frameIndex, ctx = suspLamCtx)
+                                }
+                            } else if (initExpr != null) {
+                                if (analyzeSubtree(initExpr, enclosingStmtFrameIndex = child.frameIndex, ctx = blockCtx)) {
+                                    anySuspend = true
+                                }
+                            }
+                            FrameAstHelpers.directIdentPacket(stream, child)?.unescapedName?.let { propName ->
+                                blockCtx = blockCtx.withExtraSuspendVar(propName)
+                            }
+                            continue
+                        }
+                    } else if (child.nodeTypeId == KtNodeTypes.BINARY_WITH_TYPE_ID) {
+                        val castLhs = FrameAstHelpers.childFrames(stream, child).firstOrNull()
+                        val castTr = FrameAstHelpers.firstChildFrame(stream, child, KtNodeTypes.TYPE_REFERENCE_ID)
+                        if (castLhs?.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID &&
+                            castTr != null &&
+                            isSuspendFunctionTypeFrame(stream, castTr)
+                        ) {
+                            FrameAstHelpers.directIdentPacket(stream, castLhs)?.unescapedName?.let { castVar ->
+                                blockCtx = blockCtx.withExtraSuspendVar(castVar)
+                            }
+                        }
+                    }
+                    val childHas = analyzeSubtree(child, enclosingStmtFrameIndex = child.frameIndex, ctx = blockCtx)
                     if (childHas) anySuspend = true
                 }
                 if (anySuspend) {
@@ -320,6 +491,21 @@ internal object SuspendStateMachinePass {
                 }
             }
 
+            KtNodeTypes.RETURN_ID -> {
+                val hasLabel = FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.LABEL_QUALIFIER_ID) != null
+                if (!hasLabel && ctx.returnTypeIsSuspendLambda) {
+                    val retExpr =
+                        FrameAstHelpers
+                            .childFrames(stream, frame)
+                            .firstOrNull { it.nodeTypeId != KtNodeTypes.LABEL_QUALIFIER_ID }
+                    val retLambda = retExpr?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
+                    if (retLambda != null) {
+                        analyzeSuspendTypedLambdaValue(retLambda, ctx.returnRestrictedReceiverType, ctx)
+                        return false
+                    }
+                }
+            }
+
             KtNodeTypes.LAMBDA_EXPRESSION_ID -> {
                 // Standalone lambda expression not already classified by a call argument (e.g. `val fn = { ... }`):
                 // an ordinary Kotlin lambda value is NOT a suspend context unless typed as `suspend (...) -> R`.
@@ -360,10 +546,13 @@ internal object SuspendStateMachinePass {
         ctx: SuspendAnalysisContext,
     ): Boolean {
         val stream = ctx.stream
-        val calleeName = extractCalleeSimpleName(stream, callFrame)
-        val sameFileInlineFn = ctx.sameFileInlineFunsByName[calleeName]
-        val builtinInlineKind = BUILTIN_INLINE_HOFS[calleeName]
-        val sameFileTargetFn = ctx.symbols.functionsByName[calleeName]?.firstOrNull()
+        val rawCalleeName = extractCalleeSimpleName(stream, callFrame)
+        val calleeName =
+            if (rawCalleeName in ctx.suspendCallableVars) {
+                rawCalleeName
+            } else {
+                ctx.symbols.importAliases[rawCalleeName] ?: rawCalleeName
+            }
 
         // Ordered evaluation list: [receiver?, valueArg_0, valueArg_1, ..., trailingLambda?]
         val evalExprFrames = ArrayList<PacketFrame>()
@@ -383,6 +572,34 @@ internal object SuspendStateMachinePass {
                 emptyList()
             }
         val trailingLambdaArgs = FrameAstHelpers.childFramesOfType(stream, callFrame, KtNodeTypes.LAMBDA_ARGUMENT_ID)
+        val totalCallArgs = valueArgFrames.size + trailingLambdaArgs.size
+
+        val sameFileInlineFn =
+            selectBestOverload(
+                stream = stream,
+                candidates =
+                    ctx.sameFileInlineFunsByName[calleeName]
+                        .orEmpty()
+                        .filter { fn ->
+                            fn.frameIndex != ctx.enclosingFnFrameIndex &&
+                                fn.valueParams.lastOrNull()?.typeFrameIndex?.let { tIdx ->
+                                    FrameAstHelpers.findDescendantFrame(stream, stream.frames[tIdx], KtNodeTypes.FUNCTION_TYPE_ID) != null
+                                } == true
+                        },
+                totalCallArgs = totalCallArgs,
+                hasExplicitReceiver = receiverFrame != null,
+                hasLambdaArg = trailingLambdaArgs.isNotEmpty(),
+            )
+        val resolvedCallee = ctx.symbols.importAliases[calleeName] ?: calleeName
+        val builtinInlineKind = BUILTIN_INLINE_HOFS[resolvedCallee]
+        val sameFileTargetFn =
+            selectBestOverload(
+                stream = stream,
+                candidates = ctx.symbols.functionsByName[calleeName].orEmpty(),
+                totalCallArgs = totalCallArgs,
+                hasExplicitReceiver = receiverFrame != null,
+                hasLambdaArg = trailingLambdaArgs.isNotEmpty(),
+            )
 
         val argExprsForInline = ArrayList<Int>()
         var capturedInlineLambdaFrame: PacketFrame? = null
@@ -391,26 +608,27 @@ internal object SuspendStateMachinePass {
         for ((argIdx, vaFrame) in valueArgFrames.withIndex()) {
             val innerExpr = extractValueArgumentExpr(stream, vaFrame) ?: continue
             argExprsForInline.add(innerExpr.frameIndex)
-            if (innerExpr.nodeTypeId == KtNodeTypes.LAMBDA_EXPRESSION_ID) {
+            val unwrappedLambda = FrameAstHelpers.unwrapLambdaExpression(stream, innerExpr)
+            if (unwrappedLambda != null) {
                 val lambdaResult =
                     analyzeCallLambdaArgument(
                         calleeName = calleeName,
                         paramIndex = argIdx,
-                        lambdaFrame = innerExpr,
+                        lambdaFrame = unwrappedLambda,
                         sameFileInlineFn = sameFileInlineFn,
                         sameFileTargetFn = sameFileTargetFn,
                         builtinInlineKind = builtinInlineKind,
                         ctx = ctx,
                     )
                 if (lambdaResult.inlinedIntoCaller) {
-                    capturedInlineLambdaFrame = innerExpr
+                    capturedInlineLambdaFrame = unwrappedLambda
                     if (lambdaResult.hasSuspend || lambdaResult.hasNonLocalReturn) {
                         inlineLambdaHasSuspendOrNonLocalReturn = true
                     }
-                    evalExprFrames.add(innerExpr)
+                    evalExprFrames.add(unwrappedLambda)
                     evalHasSuspend.add(lambdaResult.hasSuspend)
                 } else {
-                    evalExprFrames.add(innerExpr)
+                    evalExprFrames.add(unwrappedLambda)
                     evalHasSuspend.add(false)
                 }
             } else {
@@ -421,8 +639,14 @@ internal object SuspendStateMachinePass {
         }
 
         for ((tIdx, tlArg) in trailingLambdaArgs.withIndex()) {
-            val lambdaFrame = FrameAstHelpers.firstChildFrame(stream, tlArg, KtNodeTypes.LAMBDA_EXPRESSION_ID) ?: continue
-            val paramIdx = valueArgFrames.size + tIdx
+            val lambdaFrame = FrameAstHelpers.unwrapLambdaExpression(stream, tlArg) ?: continue
+            val targetParamCount = (sameFileInlineFn ?: sameFileTargetFn)?.valueParams?.size
+            val paramIdx =
+                if (trailingLambdaArgs.size == 1 && targetParamCount != null && targetParamCount > 0) {
+                    targetParamCount - 1
+                } else {
+                    valueArgFrames.size + tIdx
+                }
             val lambdaResult =
                 analyzeCallLambdaArgument(
                     calleeName = calleeName,
@@ -460,13 +684,32 @@ internal object SuspendStateMachinePass {
             }
         }
 
+        val allSameFileOverloads = ctx.symbols.functionsByName[calleeName].orEmpty()
+        val arityMatchedOverloads = allSameFileOverloads.filter { isArityCompatible(it, totalCallArgs) }
+        val isSameFileSuspendCall =
+            arityMatchedOverloads.isNotEmpty() &&
+                arityMatchedOverloads.any { PacketFlags.hasFlag(it.flags, PacketFlags.MOD_SUSPEND) } &&
+                (ctx.lambdaSuspendAllowed || arityMatchedOverloads.all { PacketFlags.hasFlag(it.flags, PacketFlags.MOD_SUSPEND) })
+
+        val invokesSuspendCallableVar =
+            calleeName in ctx.suspendCallableVars &&
+                !(
+                    trailingLambdaArgs.isNotEmpty() &&
+                        calleeName !in ctx.callableVarsTakingSuspendLambda &&
+                        (calleeName in KNOWN_SUSPEND_LAMBDA_BUILDERS || sameFileInlineFn != null || sameFileTargetFn != null)
+                )
+
         val isDirectSuspendCall =
-            calleeName in ctx.sameFileSuspendFuns ||
-                calleeName in ctx.suspendCallableVars ||
-                calleeName in KNOWN_SUSPEND_PRIMITIVES ||
+            isSameFileSuspendCall ||
+                invokesSuspendCallableVar ||
+                (calleeName in KNOWN_SUSPEND_PRIMITIVES && calleeName !in ctx.nonSuspendCallableVars) ||
+                (calleeName in AMBIGUOUS_COLLECTION_OR_FLOW_OPS && ctx.lambdaSuspendAllowed) ||
                 (
                     calleeName == "invoke" && receiverFrame != null &&
-                        extractSimpleRefName(stream, receiverFrame) in ctx.suspendCallableVars
+                        (
+                            extractSimpleRefName(stream, receiverFrame) in ctx.suspendCallableVars ||
+                                (receiverFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID && "this" in ctx.suspendCallableVars)
+                        )
                 )
 
         if (isDirectSuspendCall) {
@@ -486,8 +729,11 @@ internal object SuspendStateMachinePass {
             ctx.suspendCallFrames.add(outerFrame.frameIndex)
         }
 
-        // Record inline call expansion when a builtin or same-file `inline fun` has a lambda with suspend or non-local return.
-        if (capturedInlineLambdaFrame != null && inlineLambdaHasSuspendOrNonLocalReturn) {
+        // Record inline call expansion when a builtin or same-file `inline fun` has a lambda with suspend or non-local return,
+        // or when `synchronized(lock) { ... }` is called directly with an inline lambda.
+        if (capturedInlineLambdaFrame != null &&
+            (inlineLambdaHasSuspendOrNonLocalReturn || builtinInlineKind == BuiltinInlineKind.SYNCHRONIZED)
+        ) {
             val kind = builtinInlineKind ?: if (sameFileInlineFn != null) BuiltinInlineKind.SAME_FILE_INLINE_FUN else null
             if (kind != null) {
                 val lambdaParams = extractLambdaParamNames(stream, capturedInlineLambdaFrame)
@@ -540,6 +786,8 @@ internal object SuspendStateMachinePass {
 
         val isSuspendLambdaParam =
             calleeName in KNOWN_SUSPEND_LAMBDA_BUILDERS ||
+                calleeName in ctx.callableVarsTakingSuspendLambda ||
+                (ctx.inSelectBuilderScope && paramIndex >= (sameFileTargetFn?.valueParams?.size ?: 0)) ||
                 (paramInfo?.typeFrameIndex != null && isSuspendFunctionTypeFrame(stream, stream.frames[paramInfo.typeFrameIndex]))
 
         val restrictedLambdaReceiver =
@@ -559,8 +807,8 @@ internal object SuspendStateMachinePass {
 
         val allowSuspendInsideLambda =
             when {
-                isCrossinline -> false
                 isSuspendLambdaParam -> true
+                isCrossinline -> false
                 isInlinedPlace -> ctx.lambdaSuspendAllowed
                 else -> false
             }
@@ -568,10 +816,11 @@ internal object SuspendStateMachinePass {
         val childCtx =
             ctx.copyForLambda(
                 allowSuspend = allowSuspendInsideLambda,
-                crossinline = isCrossinline,
+                crossinline = isCrossinline && !isSuspendLambdaParam,
                 nonInlineOrdinary = !isInlinedPlace && !isSuspendLambdaParam,
                 restrictedType = restrictedLambdaReceiver,
                 restrictedMembers = restrictedMembers,
+                selectBuilderScope = calleeName == "select" || calleeName == "whileSelect",
             )
 
         val fnLiteral = FrameAstHelpers.firstChildFrame(stream, lambdaFrame, KtNodeTypes.FUNCTION_LITERAL_ID)
@@ -699,11 +948,11 @@ internal object SuspendStateMachinePass {
         val trailingLambda =
             FrameAstHelpers
                 .firstChildFrame(stream, targetCall, KtNodeTypes.LAMBDA_ARGUMENT_ID)
-                ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
+                ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
                 ?: FrameAstHelpers
                     .firstChildFrame(stream, targetCall, KtNodeTypes.VALUE_ARGUMENT_LIST_ID)
                     ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.VALUE_ARGUMENT_ID) }
-                    ?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.LAMBDA_EXPRESSION_ID) }
+                    ?.let { FrameAstHelpers.unwrapLambdaExpression(stream, it) }
                 ?: return null
 
         val paramNames = extractLambdaParamNames(stream, trailingLambda)
@@ -783,18 +1032,125 @@ internal object SuspendStateMachinePass {
         return allowed
     }
 
-    private fun collectSuspendCallableParamNames(
+    private fun isArityCompatible(
+        fnSym: KtFunctionSymbol,
+        totalCallArgs: Int,
+    ): Boolean {
+        val minArgs = fnSym.valueParams.count { it.defaultExprFrameIndex == null && !it.isVararg }
+        val maxArgs = if (fnSym.valueParams.any { it.isVararg }) Int.MAX_VALUE else fnSym.valueParams.size
+        return totalCallArgs in minArgs..maxArgs
+    }
+
+    private fun selectBestOverload(
+        stream: PacketStream,
+        candidates: List<KtFunctionSymbol>,
+        totalCallArgs: Int,
+        hasExplicitReceiver: Boolean,
+        hasLambdaArg: Boolean,
+    ): KtFunctionSymbol? {
+        if (candidates.isEmpty()) return null
+        val receiverFiltered =
+            if (hasExplicitReceiver) {
+                candidates.filter { it.receiverTypeFrameIndex != null || it.enclosingClassFrameIndex != null }
+            } else {
+                candidates
+            }
+        if (receiverFiltered.isEmpty()) return null
+        val arityMatches = receiverFiltered.filter { isArityCompatible(it, totalCallArgs) }
+        if (arityMatches.isEmpty()) return null
+        if (arityMatches.size == 1) return arityMatches[0]
+        return arityMatches.maxByOrNull { fn ->
+            var score = 0
+            if (hasExplicitReceiver && fn.receiverTypeFrameIndex != null) score += 4
+            if (!hasExplicitReceiver && fn.receiverTypeFrameIndex == null) score += 2
+            if (PacketFlags.hasFlag(fn.flags, PacketFlags.MOD_INLINE)) score += 2
+            val lastParamIsSuspend =
+                fn.valueParams
+                    .lastOrNull()
+                    ?.typeFrameIndex
+                    ?.let { isSuspendFunctionTypeFrame(stream, stream.frames[it]) } == true
+            if (hasLambdaArg && lastParamIsSuspend) {
+                score += 3
+            }
+            score
+        }
+    }
+
+    private class CallableVarBindings(
+        val suspendVars: Set<String>,
+        val takingSuspendLambdaVars: Set<String>,
+        val nonSuspendCallableVars: Set<String>,
+    )
+
+    private fun collectCallableParamBindings(
         stream: PacketStream,
         fnSym: KtFunctionSymbol,
-    ): Set<String> {
-        val out = LinkedHashSet<String>()
-        for (vp in fnSym.valueParams) {
-            val tIdx = vp.typeFrameIndex ?: continue
-            if (isSuspendFunctionTypeFrame(stream, stream.frames[tIdx])) {
-                out.add(vp.name)
+        symbols: SameFileSymbolTable,
+    ): CallableVarBindings {
+        val suspendOut = LinkedHashSet<String>()
+        val takingSuspendLambdaOut = LinkedHashSet<String>()
+        val nonSuspendCallableOut = LinkedHashSet<String>()
+
+        fun classifyVar(
+            name: String,
+            typeFrame: PacketFrame,
+        ) {
+            if (isSuspendFunctionTypeFrame(stream, typeFrame)) {
+                suspendOut.add(name)
+            } else if (FrameAstHelpers.findDescendantFrame(stream, typeFrame, KtNodeTypes.FUNCTION_TYPE_ID) != null) {
+                nonSuspendCallableOut.add(name)
+            }
+            if (functionTypeAcceptsSuspendLambdaArg(stream, typeFrame)) {
+                takingSuspendLambdaOut.add(name)
             }
         }
-        return out
+
+        fnSym.receiverTypeFrameIndex?.let { rIdx ->
+            classifyVar("this", stream.frames[rIdx])
+        }
+        for (vp in fnSym.valueParams) {
+            val tIdx = vp.typeFrameIndex ?: continue
+            classifyVar(vp.name, stream.frames[tIdx])
+        }
+        val encCls = fnSym.enclosingClassFrameIndex?.let { symbols.classesByFrame[it] }
+        if (encCls != null) {
+            for (cp in encCls.primaryConstructorParams) {
+                if ((cp.isVal || cp.isVar) && cp.typeFrameIndex != null) {
+                    classifyVar(cp.name, stream.frames[cp.typeFrameIndex])
+                }
+            }
+            for (mpIdx in encCls.memberPropertyFrameIndices) {
+                val mp = symbols.propertiesByFrame[mpIdx] ?: continue
+                if (mp.returnTypeFrameIndex != null) {
+                    classifyVar(mp.kotlinName, stream.frames[mp.returnTypeFrameIndex])
+                }
+            }
+        }
+        return CallableVarBindings(
+            suspendVars = suspendOut,
+            takingSuspendLambdaVars = takingSuspendLambdaOut,
+            nonSuspendCallableVars = nonSuspendCallableOut,
+        )
+    }
+
+    private fun functionTypeAcceptsSuspendLambdaArg(
+        stream: PacketStream,
+        typeFrame: PacketFrame,
+    ): Boolean {
+        val fnType = FrameAstHelpers.findDescendantFrame(stream, typeFrame, KtNodeTypes.FUNCTION_TYPE_ID) ?: return false
+        val pList = FrameAstHelpers.firstChildFrame(stream, fnType, KtNodeTypes.VALUE_PARAMETER_LIST_ID) ?: return false
+        for (param in FrameAstHelpers.childFrames(stream, pList)) {
+            val paramTr =
+                if (param.nodeTypeId == KtNodeTypes.TYPE_REFERENCE_ID) {
+                    param
+                } else {
+                    FrameAstHelpers.firstChildFrame(stream, param, KtNodeTypes.TYPE_REFERENCE_ID)
+                }
+            if (paramTr != null && isSuspendFunctionTypeFrame(stream, paramTr)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun isSuspendFunctionTypeFrame(
@@ -928,6 +1284,7 @@ internal object SuspendStateMachinePass {
             "use" to BuiltinInlineKind.USE,
             "repeat" to BuiltinInlineKind.REPEAT,
             "withLock" to BuiltinInlineKind.WITH_LOCK,
+            "synchronized" to BuiltinInlineKind.SYNCHRONIZED,
             "forEach" to BuiltinInlineKind.FOR_EACH,
         )
 
@@ -937,29 +1294,181 @@ internal object SuspendStateMachinePass {
             "suspendCancellableCoroutineReusable",
             "suspendCoroutineUninterceptedOrReturn",
             "select",
+            "selectUnbiased",
+            "whileSelect",
             "onEach",
             "map",
+            "mapNotNull",
+            "mapIndexed",
+            "mapIndexedNotNull",
             "filter",
+            "filterNot",
+            "filterIsInstance",
+            "flatMap",
+            "partition",
             "transform",
+            "runCatching",
+            "mapCatching",
+            "recoverCatching",
+            "onSuccess",
+            "onFailure",
+            "onClosed",
+            "fold",
+            "reduce",
+            "getOrElse",
+            "getOrDefault",
+            "getOrPut",
+            "takeIf",
+            "takeUnless",
+            "synchronized",
+            "List",
+            "MutableList",
+            "Array",
+            "buildList",
+            "buildSet",
+            "buildMap",
+            "buildString",
+            "forEachIndexed",
+            "any",
+            "all",
+            "none",
+            "count",
+            "first",
+            "firstOrNull",
+            "last",
+            "lastOrNull",
+            "single",
+            "singleOrNull",
+            "find",
+            "findLast",
+            "loop",
+            "update",
+            "getAndUpdate",
+            "updateAndGet",
+            "consume",
+            "assert",
+            "assertFails",
+            "assertFailsWith",
+            "autoreleasepool",
+            "memScoped",
+            "usePinned",
+            "measureTime",
+            "measureTimedValue",
+            "testSubscriptionByFirstSuspensionInCollect",
         )
 
     private val KNOWN_SUSPEND_LAMBDA_BUILDERS: Set<String> =
         setOf(
+            "suspend",
+            "start",
             "launch",
+            "launchFlow",
             "async",
             "runBlocking",
+            "runBlockingTest",
+            "runBlockingTestOnTestScope",
+            "createTestResult",
+            "runTestCoroutine",
+            "runTestCoroutineLegacy",
+            "runTestOrSkip",
+            "withMainScope",
+            "finally",
             "produce",
             "actor",
+            "broadcast",
             "flow",
+            "unsafeFlow",
+            "safeFlow",
+            "scopedFlow",
+            "flowScope",
+            "FlowCollector",
             "channelFlow",
             "callbackFlow",
+            "collect",
+            "collectLatest",
+            "collectIndexed",
+            "collectWhile",
+            "transform",
+            "unsafeTransform",
+            "transformLatest",
+            "transformWhile",
+            "onStart",
+            "onCompletion",
+            "onEmpty",
+            "onEach",
+            "onSubscription",
+            "catch",
+            "retry",
+            "retryWhen",
+            "dropWhile",
+            "takeWhile",
+            "flatMapConcat",
+            "flatMapMerge",
+            "flatMapLatest",
+            "mapLatest",
+            "combine",
+            "combineTransform",
+            "combineTransformUnsafe",
+            "combineInternal",
+            "combineLatest",
+            "zip",
+            "zipImpl",
+            "scan",
+            "scanFold",
+            "scanReduce",
+            "runningFold",
+            "runningReduce",
+            "switchMap",
+            "subscribe",
+            "onErrorReturn",
+            "debounce",
+            "sample",
+            "timeout",
+            "consumeEach",
             "withContext",
+            "withContextUndispatched",
             "withTimeout",
             "withTimeoutOrNull",
             "coroutineScope",
             "supervisorScope",
             "sequence",
             "iterator",
+            "onSend",
+            "onReceive",
+            "onReceiveCatching",
+            "onAwait",
+            "onJoin",
+            "onTimeout",
+            "default",
+            "startCoroutine",
+            "startCoroutineCancellable",
+            "startCoroutineUndispatched",
+            "createCoroutineUnintercepted",
+            "undispatchedResult",
+            "undispatchedResultWithTimeout",
+            "runTest",
+            "withVirtualTime",
+            "withEmptyContext",
+            "checkBuffer",
+            "track",
+            "runAllKindsTest",
+            "parametrized",
+            "testScope",
+        )
+
+    private val AMBIGUOUS_COLLECTION_OR_FLOW_OPS: Set<String> =
+        setOf(
+            "first",
+            "firstOrNull",
+            "single",
+            "singleOrNull",
+            "last",
+            "lastOrNull",
+            "toList",
+            "toSet",
+            "count",
+            "fold",
+            "reduce",
         )
 
     private val KNOWN_SUSPEND_PRIMITIVES: Set<String> =
@@ -978,12 +1487,6 @@ internal object SuspendStateMachinePass {
             "emitAll",
             "collect",
             "collectLatest",
-            "first",
-            "firstOrNull",
-            "single",
-            "singleOrNull",
-            "toList",
-            "toSet",
             "withContext",
             "withTimeout",
             "withTimeoutOrNull",

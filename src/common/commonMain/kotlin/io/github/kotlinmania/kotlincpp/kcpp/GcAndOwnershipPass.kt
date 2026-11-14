@@ -60,7 +60,7 @@ internal object GcAndOwnershipPass {
                     vp.typeFrameIndex
                         ?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it]) }
                         .orEmpty()
-                if (baseType in CppTypeTranslator.SHARED_HIERARCHY_TYPES) {
+                if (baseType in symbols.sharedHierarchyTypeNames) {
                     vpFrame.flags = vpFrame.flags or PacketFlags.SHARED_OWNER
                 } else {
                     vpFrame.flags = vpFrame.flags or PacketFlags.BORROWED_REF

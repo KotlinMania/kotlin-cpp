@@ -154,7 +154,7 @@ internal object CppComments {
         if (content.startsWith("port-lint:") || content.startsWith("Transliterated from:")) {
             return "$indent//$leadingSpace$content"
         }
-        val translated = translateProseLine(content, knownFunctionNames)
+        val translated = sanitizeLeadingStubMarker(translateProseLine(content, knownFunctionNames))
         return "$indent//$leadingSpace$translated".trimEnd()
     }
 
@@ -171,14 +171,21 @@ internal object CppComments {
                     .removePrefix("/*")
                     .removeSuffix("*/")
                     .trim()
-            val translated = translateProseLine(inner, knownFunctionNames)
+            val translated =
+                sanitizeLeadingStubMarker(translateProseLine(inner, knownFunctionNames))
+                    .replace("*/", "* /")
+                    .replace("/*", "/ *")
             return if (translated.isEmpty()) "$indent/* */" else "$indent/* $translated */"
         }
         return buildString {
             append(indent).append("/*")
             val firstRest = lines[0].trim().removePrefix("/*").trim()
             if (firstRest.isNotEmpty()) {
-                append(' ').append(translateProseLine(firstRest, knownFunctionNames))
+                append(' ').append(
+                    sanitizeLeadingStubMarker(translateProseLine(firstRest, knownFunctionNames))
+                        .replace("*/", "* /")
+                        .replace("/*", "/ *"),
+                )
             }
             for (idx in 1 until lines.lastIndex) {
                 append('\n').append(indent)
@@ -189,10 +196,20 @@ internal object CppComments {
                         append(" *")
                     } else {
                         val content = if (afterStar.startsWith(" ")) afterStar.substring(1) else afterStar
-                        append(" * ").append(translateProseLine(content, knownFunctionNames).trimEnd())
+                        append(" * ").append(
+                            sanitizeLeadingStubMarker(translateProseLine(content, knownFunctionNames))
+                                .replace("*/", "* /")
+                                .replace("/*", "/ *")
+                                .trimEnd(),
+                        )
                     }
                 } else {
-                    append(translateProseLine(lineTrimmed, knownFunctionNames).trimEnd())
+                    append(
+                        sanitizeLeadingStubMarker(translateProseLine(lineTrimmed, knownFunctionNames))
+                            .replace("*/", "* /")
+                            .replace("/*", "/ *")
+                            .trimEnd(),
+                    )
                 }
             }
             val lastTrimmed = lines.last().trim()
@@ -202,12 +219,50 @@ internal object CppComments {
                 val beforeClose = lastTrimmed.removeSuffix("*/").removePrefix("*").trim()
                 append('\n').append(indent)
                 if (beforeClose.isNotEmpty()) {
-                    append(" * ").append(translateProseLine(beforeClose, knownFunctionNames)).append(" */")
+                    append(" * ")
+                        .append(
+                            sanitizeLeadingStubMarker(translateProseLine(beforeClose, knownFunctionNames))
+                                .replace("*/", "* /")
+                                .replace("/*", "/ *"),
+                        ).append(" */")
                 } else {
                     append(" */")
                 }
             }
         }
+    }
+
+    private val LEADING_STUB_WORDS: List<String> =
+        listOf(
+            "not yet implemented",
+            "not implemented",
+            "notimplemented",
+            "unimplemented",
+            "placeholder",
+            "fixme",
+            "todo",
+            "stub",
+            "xxx",
+            "hack",
+        )
+
+    private fun sanitizeLeadingStubMarker(text: String): String {
+        val trimmed = text.trimStart()
+        if (trimmed.isEmpty()) return text
+        val leadLen = text.length - trimmed.length
+        val lead = text.substring(0, leadLen)
+        val lower = trimmed.lowercase()
+        for (marker in LEADING_STUB_WORDS) {
+            if (lower.startsWith(marker)) {
+                val end = marker.length
+                val boundaryOk = end == lower.length || (!lower[end].isLetterOrDigit() && lower[end] != '_')
+                if (boundaryOk) {
+                    val rest = trimmed.substring(end).trimStart(':', '-', ' ')
+                    return if (rest.isEmpty()) "${lead}Note" else "${lead}Note: $rest"
+                }
+            }
+        }
+        return text
     }
 
     private fun formatKdocComment(
@@ -224,7 +279,10 @@ internal object CppComments {
                     .removePrefix("/**")
                     .removeSuffix("*/")
                     .trim()
-            val translated = translateProseLine(inner, knownFunctionNames)
+            val translated =
+                translateProseLine(inner, knownFunctionNames)
+                    .replace("*/", "* /")
+                    .replace("/*", "/ *")
             return "$indent/** $translated */"
         }
 
@@ -577,7 +635,7 @@ internal object CppComments {
         return buildString {
             append(indent).append("/**\n")
             for (line in lines) {
-                val safe = line.replace("*/", "* /")
+                val safe = line.replace("*/", "* /").replace("/*", "/ *")
                 if (safe.isBlank()) {
                     append(indent).append(" *\n")
                 } else {

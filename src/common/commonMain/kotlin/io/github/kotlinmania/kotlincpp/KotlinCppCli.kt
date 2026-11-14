@@ -35,6 +35,8 @@ internal val CLI_USAGE_TEXT: String =
           --port-lint-prefix <prefix>  Synthesize // port-lint: source <prefix>/<relPath> when absent
           --source-root <dir>          Base directory stripped when computing provenance paths
       -n, --namespace <ns>             Override root C++ namespace (e.g. kotlinx::coroutines)
+          --file-stem-suffix <suffix>  Append multiplatform stem suffix (e.g. .native, .concurrent)
+          --source-set-subdir <dir>    Insert source-set subdirectory under kotlinx/coroutines (e.g. native, concurrent)
           --companion-c-abi            Emit <Stem>_c_api.h and <Stem>.def for @CName exports
       -q, --quiet                      Suppress progress summary lines
       -v, --version                    Show version information
@@ -222,6 +224,8 @@ internal fun runKotlinToCppCommand(
     var portLintPrefix: String? = null
     var sourceRoot: String? = null
     var namespaceOverride: String? = null
+    var fileStemSuffix: String? = null
+    var sourceSetSubdir: String? = null
     var companionCAbi = false
     var quiet = false
     val inputs = ArrayList<String>()
@@ -275,6 +279,8 @@ internal fun runKotlinToCppCommand(
             "--port-lint-prefix" -> portLintPrefix = nextVal()
             "--source-root" -> sourceRoot = nextVal()
             "-n", "--namespace" -> namespaceOverride = nextVal()
+            "--file-stem-suffix" -> fileStemSuffix = nextVal()
+            "--source-set-subdir" -> sourceSetSubdir = nextVal()
             "--companion-c-abi" -> companionCAbi = true
             "-q", "--quiet" -> quiet = true
             else -> throw IllegalArgumentException("unknown kcpp option '$optName'")
@@ -292,6 +298,8 @@ internal fun runKotlinToCppCommand(
             portLintPrefix = portLintPrefix,
             sourceRootPrefix = sourceRoot,
             rootNamespaceOverride = namespaceOverride,
+            fileStemSuffix = fileStemSuffix,
+            sourceSetSubdir = sourceSetSubdir,
             emitCompanionCAbiFiles = companionCAbi,
         )
 

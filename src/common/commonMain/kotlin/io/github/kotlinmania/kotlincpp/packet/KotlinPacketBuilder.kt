@@ -1095,22 +1095,34 @@ private class KotlinFrameTreeBuilder(
     private fun unwrapParenthesizedTypeInner(ctx: KotlinParser.ParenthesizedTypeContext): FrameDraft? {
         val innerType = ctx.getRuleContextOfType<KotlinParser.TypeContext>(0) ?: return null
         val innerRef = buildTypeReference(innerType) ?: return null
-        return innerRef.children.lastOrNull() ?: innerRef
+        val unwrapped = innerRef.children.lastOrNull() ?: return innerRef
+        return FrameDraft(
+            nodeTypeId = unwrapped.nodeTypeId,
+            firstPacketIndex = unwrapped.firstPacketIndex,
+            lastPacketIndex = unwrapped.lastPacketIndex,
+            children = unwrapped.children,
+            flags = unwrapped.flags or innerRef.flags,
+            semanticInfo = unwrapped.semanticInfo,
+        )
     }
 
     private fun buildNullableType(ctx: KotlinParser.NullableTypeContext): FrameDraft? {
         val b = ctxBounds(ctx) ?: return null
         val children = ArrayList<FrameDraft>(1)
+        var extraFlags = PacketFlags.NONE
         ctx.typeReference()?.let { buildInnerTypeReference(it)?.let(children::add) }
         ctx.parenthesizedType()?.let { pt ->
-            unwrapParenthesizedTypeInner(pt)?.let(children::add)
+            unwrapParenthesizedTypeInner(pt)?.let { inner ->
+                extraFlags = extraFlags or (inner.flags and PacketFlags.MOD_SUSPEND)
+                children.add(inner)
+            }
         }
         return FrameDraft(
             nodeTypeId = KtNodeTypes.NULLABLE_TYPE_ID,
             firstPacketIndex = b.first,
             lastPacketIndex = b.second,
             children = children,
-            flags = PacketFlags.NULLABLE_TYPE,
+            flags = PacketFlags.NULLABLE_TYPE or extraFlags,
         )
     }
 
@@ -2198,8 +2210,23 @@ private class KotlinFrameTreeBuilder(
                 }
                 markIdentRole(catchCtx.simpleIdentifier(), SymbolRole.PARAM)
                 catchCtx.type()?.let { buildTypeReference(it)?.let(vpChildren::add) }
-                val vpStart = vpChildren.firstOrNull()?.firstPacketIndex ?: ctxBounds(catchCtx.simpleIdentifier())?.first ?: lp.first
-                val vpEnd = vpChildren.lastOrNull()?.lastPacketIndex ?: ctxBounds(catchCtx.simpleIdentifier())?.second ?: rp.second
+                val identBounds = ctxBounds(catchCtx.simpleIdentifier())
+                val firstChildIdx = vpChildren.firstOrNull()?.firstPacketIndex
+                val lastChildIdx = vpChildren.lastOrNull()?.lastPacketIndex
+                val vpStart =
+                    when {
+                        firstChildIdx != null && identBounds != null -> minOf(firstChildIdx, identBounds.first)
+                        firstChildIdx != null -> firstChildIdx
+                        identBounds != null -> identBounds.first
+                        else -> lp.first
+                    }
+                val vpEnd =
+                    when {
+                        lastChildIdx != null && identBounds != null -> maxOf(lastChildIdx, identBounds.second)
+                        lastChildIdx != null -> lastChildIdx
+                        identBounds != null -> identBounds.second
+                        else -> rp.second
+                    }
                 val vpDraft = FrameDraft(KtNodeTypes.VALUE_PARAMETER_ID, vpStart, vpEnd, vpChildren)
                 cChildren.add(FrameDraft(KtNodeTypes.VALUE_PARAMETER_LIST_ID, lp.first, rp.second, listOf(vpDraft)))
             }
