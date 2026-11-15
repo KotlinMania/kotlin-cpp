@@ -42,44 +42,14 @@ internal fun CppExprAndStmtEmitter.emitValueAssignmentOrReturn(
         ) {
             val rhsUnwrapped = unwrapTransparentFrame(binChildren[2])
             if (isElvisControlTransferTarget(rhsUnwrapped)) {
-                val elvisTemp = freshTemp("kxs_elvis")
-                val lhsCode = emitExpression(binChildren[0])
-                val transferStmt =
-                    emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
-                val derefExpr =
-                    if (bundle.isDocExample) {
-                        includes.addSystem("type_traits")
-                        "([&](auto&& kxs_ev) -> decltype(auto) { " +
-                            "if constexpr (std::is_pointer_v<std::decay_t<decltype(kxs_ev)>>) " +
-                            "return kxs_ev; else return *kxs_ev; }($elvisTemp))"
-                    } else {
-                        includes.needsNullUnwrapDef = true
-                        includes.addSystem("type_traits")
-                        includes.addSystem("utility")
-                        "kxs_unwrap_opt($elvisTemp)"
-                    }
+                val lowered = lowerElvisControlTransfer(binChildren[0], rhsUnwrapped, indent)
                 val assignLine =
                     if (targetReturn) {
-                        "${indent}return ${wrapSuspendReturnValue(derefExpr)};\n"
+                        "${indent}return ${wrapSuspendReturnValue(lowered.derefExpr)};\n"
                     } else {
-                        "$indent$targetVar = $derefExpr;\n"
+                        "$indent$targetVar = ${lowered.derefExpr};\n"
                     }
-                return buildString {
-                    append(indent)
-                    append("auto ")
-                    append(elvisTemp)
-                    append(" = ")
-                    append(lhsCode)
-                    append(";\n")
-                    append(indent)
-                    append("if (")
-                    append(if (bundle.isDocExample) "!$elvisTemp" else "kxs_is_null($elvisTemp)")
-                    append(") {\n")
-                    append(transferStmt)
-                    append(indent)
-                    append("}\n")
-                    append(assignLine)
-                }
+                return "${lowered.preludeCode}$assignLine"
             }
         }
     }
@@ -165,18 +135,12 @@ internal fun CppExprAndStmtEmitter.emitValueAssignmentOrReturn(
                     } else {
                         enclosingFunctionReturnType
                     }
-                if (effectiveRetTypeForNull?.startsWith("std::optional<") == true) {
-                    includes.addSystem("optional")
-                    return "${indent}return std::nullopt;\n"
-                }
-                if (effectiveRetTypeForNull == "std::any") {
-                    return "${indent}return {};\n"
-                }
+                renderNullReturnForType(effectiveRetTypeForNull, indent)?.let { return it }
             }
             val rendered = emitExpression(unwrappedExpr)
             if (PacketFlags.hasFlag(unwrappedExpr.flags, PacketFlags.DIVERGING_EXPR)) {
                 if (isOuterSuspendReturnContext) {
-                    if (rendered.trimStart().startsWith("throw ")) {
+                    if (isThrowCppStatement(rendered)) {
                         "$indent$rendered;\n"
                     } else {
                         "$indent$rendered;\n${indent}return ${defaultSuspendFallthroughReturnExpr()};\n"
@@ -185,7 +149,7 @@ internal fun CppExprAndStmtEmitter.emitValueAssignmentOrReturn(
                     includes.addSystem("utility")
                     "$indent$rendered;\n${indent}std::unreachable();\n"
                 }
-            } else if (rendered.trimStart().startsWith("throw ")) {
+            } else if (isThrowCppStatement(rendered)) {
                 "$indent$rendered;\n"
             } else if (targetReturn) {
                 val trimmedRendered = rendered.trim()
@@ -259,44 +223,9 @@ internal fun CppExprAndStmtEmitter.emitStatementBodyWithoutLeadingComments(
                     includes.addSystem("type_traits")
                     for (elvisFrame in inlineElvis) {
                         val ch = FrameAstHelpers.childFrames(stream, elvisFrame)
-                        val elvisTemp = freshTemp("kxs_elvis")
-                        val lhsCode = emitExpression(ch[0])
-                        val rhsTransfer =
-                            emitStatement(
-                                unwrapTransparentFrame(ch[2]),
-                                "$indent    ",
-                                inValuePosition = false,
-                                resultTargetVar = null,
-                            )
-                        append(indent)
-                            .append("auto ")
-                            .append(elvisTemp)
-                            .append(" = ")
-                            .append(lhsCode)
-                            .append(";\n")
-                        val nullCheck =
-                            if (bundle.isDocExample) {
-                                "!$elvisTemp"
-                            } else {
-                                includes.needsNullUnwrapDef = true
-                                "kxs_is_null($elvisTemp)"
-                            }
-                        append(indent)
-                            .append("if (")
-                            .append(nullCheck)
-                            .append(") {\n")
-                        append(rhsTransfer)
-                        append(indent).append("}\n")
-                        preLoweredElvisExprs[elvisFrame.frameIndex] =
-                            if (bundle.isDocExample) {
-                                "([&](auto&& kxs_ev) -> decltype(auto) { if constexpr (std::is_pointer_v<std::decay_t<decltype(" +
-                                    "kxs_ev)>>) return kxs_ev; else return *kxs_ev; }($elvisTemp))"
-                            } else {
-                                includes.needsNullUnwrapDef = true
-                                includes.addSystem("type_traits")
-                                includes.addSystem("utility")
-                                "kxs_unwrap_opt($elvisTemp)"
-                            }
+                        val lowered = lowerElvisControlTransfer(ch[0], unwrapTransparentFrame(ch[2]), indent)
+                        append(lowered.preludeCode)
+                        preLoweredElvisExprs[elvisFrame.frameIndex] = lowered.derefExpr
                         newlyBound.add(elvisFrame.frameIndex)
                     }
                     append(emitStatementBodyWithoutLeadingComments(stmtFrame, indent, inValuePosition, resultTargetVar))
@@ -410,40 +339,9 @@ internal fun CppExprAndStmtEmitter.emitStatementBodyWithoutLeadingComments(
                     ) {
                         val elvisRhs = unwrapTransparentFrame(elvisCh[2])
                         if (isElvisControlTransferTarget(elvisRhs)) {
-                            val elvisTemp = freshTemp("kxs_elvis")
                             val lhsTarget = emitExpression(binChildren[0])
-                            val elvisLhsCode = emitExpression(elvisCh[0])
-                            val transferStmt =
-                                emitStatement(elvisRhs, "$indent    ", inValuePosition = false, resultTargetVar = null)
-                            val derefElvisExpr =
-                                if (bundle.isDocExample) {
-                                    includes.addSystem("type_traits")
-                                    "([&](auto&& kxs_ev) -> decltype(auto) { if constexpr (std::is_pointer_v<std::decay_t<decltype(kxs_ev)>>) return kxs_ev; else return *kxs_ev; }($elvisTemp))"
-                                } else {
-                                    includes.needsNullUnwrapDef = true
-                                    includes.addSystem("type_traits")
-                                    includes.addSystem("utility")
-                                    "kxs_unwrap_opt($elvisTemp)"
-                                }
-                            return buildString {
-                                append(indent)
-                                    .append("auto ")
-                                    .append(elvisTemp)
-                                    .append(" = ")
-                                    .append(elvisLhsCode)
-                                    .append(";\n")
-                                append(indent)
-                                    .append("if (")
-                                    .append(if (bundle.isDocExample) "!$elvisTemp" else "kxs_is_null($elvisTemp)")
-                                    .append(") {\n")
-                                append(transferStmt)
-                                append(indent).append("}\n")
-                                append(indent)
-                                    .append(lhsTarget)
-                                    .append(" = ")
-                                    .append(derefElvisExpr)
-                                    .append(";\n")
-                            }
+                            val lowered = lowerElvisControlTransfer(elvisCh[0], elvisRhs, indent)
+                            return "${lowered.preludeCode}$indent$lhsTarget = ${lowered.derefExpr};\n"
                         }
                     }
                 }
@@ -651,19 +549,21 @@ internal fun CppExprAndStmtEmitter.emitLocalPropertyDecl(
                 }
             }
 
+            val parsedDeclType = CppType.parseInternal(effectiveDeclType)
             val tempType =
-                if (effectiveDeclType == "void" || effectiveDeclType == "[[noreturn]] void") {
+                if (parsedDeclType.stripNoReturn().isVoid) {
                     includes.addSystem("any")
                     "std::any"
                 } else {
-                    if (effectiveDeclType == "std::any") includes.addSystem("any")
+                    if (parsedDeclType.isStdAny) includes.addSystem("any")
                     effectiveDeclType
                 }
+            val parsedTemp = CppType.parseInternal(tempType)
             val useOptWrapper =
-                tempType != "std::any" &&
-                    !tempType.startsWith("std::optional<") &&
+                !parsedTemp.isStdAny &&
+                    !parsedTemp.isOptional &&
                     !isCppPtrOrSharedType(tempType) &&
-                    tempType != "std::exception_ptr"
+                    !parsedTemp.isExceptionPtr
             if (useOptWrapper) includes.addSystem("optional")
             includes.addSystem("utility")
             val resTmp = freshTemp("kxs_inln_res")
@@ -759,50 +659,15 @@ internal fun CppExprAndStmtEmitter.emitLocalPropertyDecl(
         ) {
             val rhsUnwrapped = unwrapTransparentFrame(ch[2])
             if (isElvisControlTransferTarget(rhsUnwrapped)) {
-                val elvisTemp = freshTemp("kxs_elvis")
-                val lhsCode = emitExpression(ch[0])
-                val lhsIsPolyPtr = isPointerOrSharedPtrReceiver(ch[0], lhsCode)
+                val lowered = lowerElvisControlTransfer(ch[0], rhsUnwrapped, indent)
+                val lhsIsPolyPtr = isPointerOrSharedPtrReceiver(ch[0], lowered.lhsCode)
                 val lhsSimpleType = declaredSimpleType ?: inferExpressionSimpleTypeName(ch[0])
-                val transferStmt =
-                    emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
-                val derefElvisExpr =
-                    if (bundle.isDocExample) {
-                        includes.addSystem("type_traits")
-                        "([&](auto&& kxs_ev) -> decltype(auto) { if constexpr (std::is_pointer_v<std::decay_t<decltype(kxs_ev)>>) return kxs_ev; else return *kxs_ev; }($elvisTemp))"
-                    } else {
-                        includes.needsNullUnwrapDef = true
-                        includes.addSystem("type_traits")
-                        includes.addSystem("utility")
-                        "kxs_unwrap_opt($elvisTemp)"
-                    }
                 bindLocalName(kotlinName, cppName)
                 if (lhsSimpleType != null && declaredSimpleType == null) markLocalType(kotlinName, lhsSimpleType)
                 if (lhsIsPolyPtr || (cppType != "auto" && isCppPtrOrSharedType(cppType))) {
                     markLocalPolyVar(kotlinName)
                 }
-                return buildString {
-                    append(indent)
-                    append("auto ")
-                    append(elvisTemp)
-                    append(" = ")
-                    append(lhsCode)
-                    append(";\n")
-                    append(indent)
-                    append("if (")
-                    append(if (bundle.isDocExample) "!$elvisTemp" else "kxs_is_null($elvisTemp)")
-                    append(") {\n")
-                    append(transferStmt)
-                    append(indent)
-                    append("}\n")
-                    append(indent)
-                    append(constQual)
-                    append(cppType)
-                    append(' ')
-                    append(cppName)
-                    append(" = ")
-                    append(derefElvisExpr)
-                    append(";\n")
-                }
+                return "${lowered.preludeCode}$indent$constQual$cppType $cppName = ${lowered.derefExpr};\n"
             }
         }
         val unwrappedTryInit = unwrapTransparentFrame(initFrame)
@@ -992,18 +857,16 @@ internal fun CppExprAndStmtEmitter.emitLocalPropertyDecl(
             } else {
                 rawInitBeforeBind
             }
+        val parsedCppType = CppType.parseInternal(cppType)
         val coercedInit =
             when {
                 rawInit.startsWith("std::vector<void*>(") &&
-                    cppType.startsWith("std::vector<") &&
+                    parsedCppType.isVector &&
                     cppType != "std::vector<void*>" ->
                     cppType + rawInit.removePrefix("std::vector<void*>")
-                rawInit == "nullptr" && cppType.startsWith("std::optional<") -> {
-                    includes.addSystem("optional")
-                    "std::nullopt"
-                }
-                rawInit == "nullptr" && cppType == "std::any" -> "{}"
-                cppType == "std::exception_ptr" -> wrapWithExceptionPtrConversion(rawInit, initFrame)
+                rawInit == "nullptr" && (parsedCppType.isOptional || parsedCppType.isStdAny) ->
+                    parsedCppType.coerceNullDefaultExpr(rawInit, includes, coerceStdAnyToBraces = true)
+                parsedCppType.isExceptionPtr -> wrapWithExceptionPtrConversion(rawInit, initFrame)
                 else -> rawInit
             }
         if (containsUnquotedStandaloneIdent(coercedInit, cppName)) {
@@ -1053,7 +916,7 @@ internal fun CppExprAndStmtEmitter.emitLocalFunctionDecl(
             activeTypeParams = activeTypeParams,
             enclosingClass = enclosingClass,
             receiverSubstitution = if (recvTypeFrame != null) "kxs_self" else receiverSubstitution,
-            isVoidReturnContext = retType == "void" || retType == "[[noreturn]] void",
+            isVoidReturnContext = CppType.parseInternal(retType).stripNoReturn().isVoid,
             enclosingFunctionReturnType = retType.takeIf { it != "auto" },
             localPolymorphicClasses = localPolymorphicClasses,
             localExtensionFunctions = LinkedHashMap(localExtensionFunctions),
@@ -1302,7 +1165,7 @@ internal fun CppExprAndStmtEmitter.emitLocalClassOrObjectDecl(
                             blockB != null -> "void"
                             else -> "auto"
                         }
-                    val isVoidM = retT == "void" || retT == "[[noreturn]] void"
+                    val isVoidM = CppType.parseInternal(retT).stripNoReturn().isVoid
                     val pList = FrameAstHelpers.firstChildFrame(stream, member, KtNodeTypes.VALUE_PARAMETER_LIST_ID)
                     val vps = FrameAstHelpers.extractValueParams(stream, pList)
                     val mEmitter =
@@ -1445,13 +1308,7 @@ internal fun CppExprAndStmtEmitter.emitReturnStmt(
             } else {
                 enclosingFunctionReturnType
             }
-        if (effectiveRetTypeForNull?.startsWith("std::optional<") == true) {
-            includes.addSystem("optional")
-            return "${indent}return std::nullopt;\n"
-        }
-        if (effectiveRetTypeForNull == "std::any") {
-            return "${indent}return {};\n"
-        }
+        renderNullReturnForType(effectiveRetTypeForNull, indent)?.let { return it }
     }
     if (unwrappedRet.nodeTypeId == KtNodeTypes.IF_ID ||
         unwrappedRet.nodeTypeId == KtNodeTypes.WHEN_ID ||
@@ -1473,7 +1330,7 @@ internal fun CppExprAndStmtEmitter.emitReturnStmt(
     val effectiveRetTarget =
         if (inExpressionIifeDepth > 0) currentExpectedTargetType else enclosingFunctionReturnType
     val renderedRet = withExpectedTargetType(effectiveRetTarget) { emitExpression(exprChild) }
-    if (renderedRet.trimStart().startsWith("throw ")) {
+    if (isThrowCppStatement(renderedRet)) {
         return "$indent$renderedRet;\n"
     }
     if (PacketFlags.hasFlag(unwrappedRet.flags, PacketFlags.DIVERGING_EXPR) && isOuterSuspendReturnContext) {
@@ -2220,3 +2077,89 @@ internal fun CppExprAndStmtEmitter.emitForStmt(
         }
     }
 }
+
+private data class ElvisTransferLowering(
+    val lhsCode: String,
+    val preludeCode: String,
+    val derefExpr: String,
+)
+
+private fun CppExprAndStmtEmitter.formatElvisDerefExpr(elvisTemp: String): String =
+    if (bundle.isDocExample) {
+        includes.addSystem("type_traits")
+        buildCppTokens {
+            emitIife(
+                capture = "&",
+                paramsDecl = "auto&& kxs_ev",
+                explicitReturnType = "decltype(auto)",
+                invokeArgs = elvisTemp,
+                bodyCode =
+                    "if constexpr (std::is_pointer_v<std::decay_t<decltype(kxs_ev)>>) " +
+                        "return kxs_ev; else return *kxs_ev;",
+            )
+        }
+    } else {
+        includes.needsNullUnwrapDef = true
+        includes.addSystem("type_traits")
+        includes.addSystem("utility")
+        "kxs_unwrap_opt($elvisTemp)"
+    }
+
+private fun CppExprAndStmtEmitter.lowerElvisControlTransfer(
+    lhsFrame: PacketFrame,
+    rhsUnwrapped: PacketFrame,
+    indent: String,
+): ElvisTransferLowering {
+    val elvisTemp = freshTemp("kxs_elvis")
+    val lhsCode = emitExpression(lhsFrame)
+    val transferStmt =
+        emitStatement(rhsUnwrapped, "$indent    ", inValuePosition = false, resultTargetVar = null)
+    val nullCheck =
+        if (bundle.isDocExample) {
+            "!$elvisTemp"
+        } else {
+            includes.needsNullUnwrapDef = true
+            "kxs_is_null($elvisTemp)"
+        }
+    val header =
+        buildCppTokens(baseIndent = indent) {
+            keyword("auto")
+            space()
+            ident(elvisTemp)
+            space()
+            punct("=", jointToNext = false)
+            space()
+            emitRawCode(lhsCode)
+            punct(";", jointToNext = false)
+            newline()
+            keyword("if")
+            space()
+            parens { emitRawCode(nullCheck) }
+            space()
+            punct("{", jointToNext = false)
+            newline()
+        }
+    return ElvisTransferLowering(
+        lhsCode = lhsCode,
+        preludeCode = "$header$transferStmt$indent}\n",
+        derefExpr = formatElvisDerefExpr(elvisTemp),
+    )
+}
+
+private fun CppExprAndStmtEmitter.renderNullReturnForType(
+    retType: String?,
+    indent: String,
+): String? {
+    val parsed = retType?.let { CppType.parseInternal(it) } ?: return null
+    if (parsed.isOptional) {
+        includes.addSystem("optional")
+        return "${indent}return std::nullopt;\n"
+    }
+    if (parsed.isStdAny) {
+        return "${indent}return {};\n"
+    }
+    return null
+}
+
+private fun isThrowCppStatement(code: String): Boolean =
+    CppTokenStream.tokenizeCppCode(code).startsWithKeyword("throw")

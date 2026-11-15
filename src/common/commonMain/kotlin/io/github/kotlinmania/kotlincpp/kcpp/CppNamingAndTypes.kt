@@ -326,6 +326,17 @@ internal class CppTypeTranslator(
     private val uniqueNonInnerNestedCppNames: Map<String, String> = emptyMap(),
     private val localClassCppNames: Map<String, String> = emptyMap(),
 ) {
+    fun translateCppType(
+        typeFrame: PacketFrame?,
+        position: CppTypePosition = CppTypePosition.VALUE,
+        extraFlags: Long = PacketFlags.NONE,
+        enclosingClassName: String? = null,
+    ): CppType =
+        CppType.parseInternal(
+            rendered = translateTypeFrame(typeFrame, position, extraFlags, enclosingClassName),
+            typeParamNames = typeParamNames,
+        )
+
     fun translateTypeFrame(
         typeFrame: PacketFrame?,
         position: CppTypePosition = CppTypePosition.VALUE,
@@ -428,7 +439,7 @@ internal class CppTypeTranslator(
                     includes.addProject("kotlinx/coroutines/KotlinGCBridge.hpp")
                     return "OwningExternalRCRef"
                 }
-                if (base.startsWith("std::shared_ptr<")) return base
+                if (CppType.parseInternal(base, typeParamNames).isSharedPtr) return base
                 includes.addSystem("memory")
                 return "std::shared_ptr<$base>"
             }
@@ -444,11 +455,12 @@ internal class CppTypeTranslator(
                 return nonNull
             }
         }
-        if (nonNull.endsWith("*") ||
-            nonNull.startsWith("std::shared_ptr<") ||
-            nonNull.startsWith("std::function<") ||
-            nonNull == "std::any" ||
-            nonNull == "std::exception_ptr"
+        val parsedNonNull = CppType.parseInternal(nonNull, typeParamNames)
+        if (parsedNonNull.isRawPtr ||
+            parsedNonNull.isSharedPtr ||
+            parsedNonNull.isStdFunction ||
+            parsedNonNull.isStdAny ||
+            parsedNonNull.isExceptionPtr
         ) {
             return nonNull
         }
@@ -1236,9 +1248,9 @@ internal class CppTypeTranslator(
         val retFrame = directTypeRefs.lastOrNull()
         val retType =
             if (isSuspend) {
-                translateTypeFrame(retFrame, CppTypePosition.TYPE_ARGUMENT).removePrefix("[[noreturn]] ")
+                translateCppType(retFrame, CppTypePosition.TYPE_ARGUMENT).stripNoReturn().render()
             } else {
-                translateTypeFrame(retFrame, CppTypePosition.RETURN).removePrefix("[[noreturn]] ")
+                translateCppType(retFrame, CppTypePosition.RETURN).stripNoReturn().render()
             }
 
         if (isSuspend) {
@@ -1319,29 +1331,47 @@ internal class CppTypeTranslator(
                 "std::uintptr_t",
             )
 
+        private fun isNonAtomicStdOrCoroType(type: CppType): Boolean =
+            when (type) {
+                is CppType.Builtin ->
+                    type.kind == CppBuiltinType.STD_STRING ||
+                        type.kind == CppBuiltinType.STD_STRING_VIEW ||
+                        type.kind == CppBuiltinType.STD_ANY ||
+                        type.kind == CppBuiltinType.EXCEPTION_PTR ||
+                        type.kind == CppBuiltinType.NULLPTR_T
+                is CppType.SharedPtr,
+                is CppType.UniquePtr,
+                is CppType.Optional,
+                is CppType.Vector,
+                is CppType.Function,
+                is CppType.SuspendFunction,
+                -> true
+                is CppType.Named ->
+                    type.qualifiers.firstOrNull() == "std" ||
+                        type.simpleName == "Result" ||
+                        type.simpleName == "SuspendFunction"
+                else -> false
+            }
+
         fun coerceToTrivialAtomicElementType(
             rawType: String,
             simpleEnumNames: Set<String> = emptySet(),
         ): String {
             val trimmed = rawType.trim()
             if (trimmed.isEmpty()) return "void*"
-            if (trimmed.endsWith("*")) return trimmed
+            val parsed = CppType.parseInternal(trimmed)
+            if (parsed.isRawPtr) return trimmed
             if (trimmed in TRIVIAL_ATOMIC_SCALAR_TYPES || trimmed in simpleEnumNames) return trimmed
-            if (trimmed.startsWith("std::optional<") && trimmed.endsWith(">")) {
-                val inner = trimmed.substring("std::optional<".length, trimmed.length - 1).trim()
-                if (inner in TRIVIAL_ATOMIC_SCALAR_TYPES || inner in simpleEnumNames) {
+            if (parsed is CppType.Optional) {
+                val inner = parsed.element
+                val innerStr = inner.render()
+                if (innerStr in TRIVIAL_ATOMIC_SCALAR_TYPES || innerStr in simpleEnumNames) {
                     return trimmed
                 }
-                if (inner.endsWith("*")) return inner
-                if (inner.startsWith("std::") || inner.startsWith("SuspendFunction<") || inner.startsWith("Result<")) {
-                    return "void*"
-                }
-                return "$inner*"
+                if (inner.isRawPtr) return innerStr
+                return if (isNonAtomicStdOrCoroType(inner)) "void*" else "$innerStr*"
             }
-            if (trimmed.startsWith("std::") || trimmed.startsWith("SuspendFunction<") || trimmed.startsWith("Result<")) {
-                return "void*"
-            }
-            return "$trimmed*"
+            return if (isNonAtomicStdOrCoroType(parsed)) "void*" else "$trimmed*"
         }
 
         val VOID_PTR_STAR_PROJECTION_TYPES: Set<String> =

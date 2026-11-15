@@ -1307,85 +1307,10 @@ internal object CppComments {
         return sb.toString()
     }
 
-    internal fun stripCppCommentsAndStrings(code: String): String {
-        val sb = StringBuilder(code.length)
-        var i = 0
-        val n = code.length
-        while (i < n) {
-            val ch = code[i]
-            if (ch == '/' && i + 1 < n) {
-                val next = code[i + 1]
-                if (next == '/') {
-                    while (i < n && code[i] != '\n') {
-                        sb.append(' ')
-                        i += 1
-                    }
-                    continue
-                }
-                if (next == '*') {
-                    sb.append("  ")
-                    i += 2
-                    while (i < n) {
-                        if (code[i] == '*' && i + 1 < n && code[i + 1] == '/') {
-                            sb.append("  ")
-                            i += 2
-                            break
-                        }
-                        sb.append(if (code[i] == '\n') '\n' else ' ')
-                        i += 1
-                    }
-                    continue
-                }
-            }
-            if (ch == 'R' && i + 1 < n && code[i + 1] == '"') {
-                val openParen = code.indexOf('(', i + 2)
-                if (openParen > i + 1) {
-                    val delim = code.substring(i + 2, openParen)
-                    if (delim.length <= 16 && delim.none { it.isWhitespace() || it == '\\' || it == ')' }) {
-                        val endMarker = ")$delim\""
-                        val closeIdx = code.indexOf(endMarker, openParen + 1)
-                        if (closeIdx >= 0) {
-                            val end = closeIdx + endMarker.length
-                            for (k in i until end) sb.append(if (code[k] == '\n') '\n' else ' ')
-                            i = end
-                            continue
-                        }
-                    }
-                }
-            }
-            if (ch == '"' || ch == '\'') {
-                val quote = ch
-                sb.append(' ')
-                i += 1
-                var escaped = false
-                while (i < n) {
-                    val c = code[i]
-                    sb.append(if (c == '\n') '\n' else ' ')
-                    i += 1
-                    if (escaped) {
-                        escaped = false
-                    } else if (c == '\\') {
-                        escaped = true
-                    } else if (c == quote) {
-                        break
-                    }
-                }
-                continue
-            }
-            sb.append(ch)
-            i += 1
-        }
-        return sb.toString()
-    }
-
     internal fun containsWholeWordInCode(
         code: String,
         word: String,
-    ): Boolean {
-        if (word.isEmpty() || code.isEmpty()) return false
-        val stripped = stripCppCommentsAndStrings(code)
-        return Regex("""(?<![A-Za-z0-9_])${Regex.escape(word)}(?![A-Za-z0-9_])""").containsMatchIn(stripped)
-    }
+    ): Boolean = CppTokenStream.tokenizeCppCode(code).containsIdent(word)
 
     private fun nextSignificantPacket(
         packets: List<SyntaxPacket>,

@@ -176,47 +176,13 @@ internal fun CppExprAndStmtEmitter.emitBinaryExpr(binFrame: PacketFrame): String
         -> {
             val isEq = opText == "==="
             val eqOp = if (isEq) "==" else "!="
-            if (bundle.config.gcMode != CppGcMode.KONAN_GC && isStdAnyExpr(lhsFrame)) {
-                includes.addSystem("any")
-                includes.addSystem("cstddef")
-                includes.addSystem("memory")
-                includes.addSystem("type_traits")
-                includes.addSystem("typeinfo")
-                if (unwrapTransparentFrame(rhsFrame).nodeTypeId == KtNodeTypes.NULL_ID) {
-                    val isNullExpr = "(!$lhs.has_value() || $lhs.type() == typeid(std::nullptr_t))"
-                    return if (isEq) isNullExpr else "(!$isNullExpr)"
+            if (bundle.config.gcMode != CppGcMode.KONAN_GC) {
+                when {
+                    isStdAnyExpr(lhsFrame) ->
+                        return emitStdAnyIdentityComparison(lhs, rhsFrame, rhs, isEq)
+                    isStdAnyExpr(rhsFrame) ->
+                        return emitStdAnyIdentityComparison(rhs, lhsFrame, lhs, isEq)
                 }
-                if (rhsFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID && receiverSubstitution == null) {
-                    val sameCheck =
-                        "(std::any_cast<decltype(this)>(std::addressof($lhs)) != nullptr && " +
-                            "*std::any_cast<decltype(this)>(std::addressof($lhs)) == this)"
-                    return if (isEq) sameCheck else "(!$sameCheck)"
-                }
-                val sameCheck =
-                    "(std::any_cast<const std::decay_t<decltype($rhs)>*>(std::addressof($lhs)) != nullptr && " +
-                        "*std::any_cast<const std::decay_t<decltype($rhs)>*>(std::addressof($lhs)) == std::addressof($rhs))"
-                return if (isEq) sameCheck else "(!$sameCheck)"
-            }
-            if (bundle.config.gcMode != CppGcMode.KONAN_GC && isStdAnyExpr(rhsFrame)) {
-                includes.addSystem("any")
-                includes.addSystem("cstddef")
-                includes.addSystem("memory")
-                includes.addSystem("type_traits")
-                includes.addSystem("typeinfo")
-                if (unwrapTransparentFrame(lhsFrame).nodeTypeId == KtNodeTypes.NULL_ID) {
-                    val isNullExpr = "(!$rhs.has_value() || $rhs.type() == typeid(std::nullptr_t))"
-                    return if (isEq) isNullExpr else "(!$isNullExpr)"
-                }
-                if (lhsFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID && receiverSubstitution == null) {
-                    val sameCheck =
-                        "(std::any_cast<decltype(this)>(std::addressof($rhs)) != nullptr && " +
-                            "*std::any_cast<decltype(this)>(std::addressof($rhs)) == this)"
-                    return if (isEq) sameCheck else "(!$sameCheck)"
-                }
-                val sameCheck =
-                    "(std::any_cast<const std::decay_t<decltype($lhs)>*>(std::addressof($rhs)) != nullptr && " +
-                        "*std::any_cast<const std::decay_t<decltype($lhs)>*>(std::addressof($rhs)) == std::addressof($lhs))"
-                return if (isEq) sameCheck else "(!$sameCheck)"
             }
             val isEnumOwner =
                 enclosingClass?.kind == KtClassKind.SIMPLE_ENUM ||
@@ -367,12 +333,9 @@ internal fun CppExprAndStmtEmitter.emitBinaryWithTypeExpr(castFrame: PacketFrame
 
     val lhsCode = lhs?.let { emitExpression(it) } ?: "nullptr"
     if (!bundle.isDocExample && isSafeCast) {
+        val parsedClean = CppType.parseInternal(targetCpp).stripCvRef()
         val safeTarget =
-            if (cleanType.startsWith("std::shared_ptr<") ||
-                cleanType.endsWith("*") ||
-                cleanType.startsWith("std::optional<") ||
-                cleanType == "std::any"
-            ) {
+            if (parsedClean.isPointerLike || parsedClean.isOptional || parsedClean.isStdAny) {
                 cleanType
             } else {
                 includes.addSystem("optional")
@@ -728,9 +691,7 @@ internal fun CppExprAndStmtEmitter.emitLambdaClosureExpr(
             val recvCls = recvSimple?.let { lookupAccessibleClassByName(it) }
             val recvCppT = translateType(receiverTypeRef, CppTypePosition.EXTENSION_RECEIVER)
             val recvIsPtr =
-                recvCppT.startsWith("std::shared_ptr<") ||
-                    recvCppT.startsWith("const std::shared_ptr<") ||
-                    recvCppT.endsWith("*") ||
+                CppType.parseInternal(recvCppT).stripCvRef().isPointerLike ||
                     (recvSimple != null && isSharedThisClass(recvSimple))
             receiverSubstitution = "kxs_this"
             extensionReceiverClass = recvCls
@@ -1512,3 +1473,29 @@ internal fun CppExprAndStmtEmitter.renderClassLikeMethodParams(
             }
         "$unusedPrefix$pT ${vp.cppName}"
     }
+
+private fun CppExprAndStmtEmitter.emitStdAnyIdentityComparison(
+    anyExpr: String,
+    otherFrame: PacketFrame,
+    otherExpr: String,
+    isEq: Boolean,
+): String {
+    includes.addSystem("any")
+    includes.addSystem("cstddef")
+    includes.addSystem("memory")
+    includes.addSystem("type_traits")
+    includes.addSystem("typeinfo")
+    val check =
+        when {
+            unwrapTransparentFrame(otherFrame).nodeTypeId == KtNodeTypes.NULL_ID ->
+                "(!$anyExpr.has_value() || $anyExpr.type() == typeid(std::nullptr_t))"
+            otherFrame.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID && receiverSubstitution == null ->
+                "(std::any_cast<decltype(this)>(std::addressof($anyExpr)) != nullptr && " +
+                    "*std::any_cast<decltype(this)>(std::addressof($anyExpr)) == this)"
+            else ->
+                "(std::any_cast<const std::decay_t<decltype($otherExpr)>*>(std::addressof($anyExpr)) != nullptr && " +
+                    "*std::any_cast<const std::decay_t<decltype($otherExpr)>*>(std::addressof($anyExpr)) == " +
+                    "std::addressof($otherExpr))"
+        }
+    return if (isEq) check else "(!$check)"
+}

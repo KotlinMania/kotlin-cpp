@@ -2,20 +2,18 @@ package io.github.kotlinmania.kotlincpp.kcpp
 
 internal fun emitSharedHelperPreamble(
     includes: CppIncludeCollector,
-    out: StringBuilder,
+    out: CppTokenEmitter,
 ) {
     if (includes.rootForwardDeclarations.isNotEmpty()) {
-        out.append('\n')
+        out.newline()
         for (fwd in includes.rootForwardDeclarations) {
-            out.append(fwd).append('\n')
+            out.emitRawCode(fwd).ensureTrailingNewline()
         }
     }
     if (includes.needsSequenceAlias) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_SEQUENCE_DEFINED",
             """
-
-            #ifndef KXS_SEQUENCE_DEFINED
-            #define KXS_SEQUENCE_DEFINED
             template <typename E>
             struct KxsSequence : public std::vector<E> {
                 using std::vector<E>::vector;
@@ -27,17 +25,13 @@ internal fun emitSharedHelperPreamble(
             inline KxsEmptySequence empty_sequence() { return {}; }
             template <typename E>
             inline KxsSequence<E> empty_sequence() { return {}; }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsIntRangeDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_INT_RANGE_DEFINED",
             """
-
-            #ifndef KXS_INT_RANGE_DEFINED
-            #define KXS_INT_RANGE_DEFINED
             template <typename T>
             struct KxsIntRange {
                 T start_{};
@@ -55,17 +49,13 @@ internal fun emitSharedHelperPreamble(
                 constexpr bool contains(T value) const noexcept { return start_ <= value && value <= end_inclusive_; }
                 constexpr bool is_empty() const noexcept { return start_ > end_inclusive_; }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsTrimIndentDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_TRIM_INDENT_DEFINED",
             """
-
-            #ifndef KXS_TRIM_INDENT_DEFINED
-            #define KXS_TRIM_INDENT_DEFINED
             inline std::string kxs_trim_indent(const std::string& s) {
                 std::vector<std::string> lines;
                 std::istringstream iss(s);
@@ -98,17 +88,13 @@ internal fun emitSharedHelperPreamble(
                 }
                 return result;
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsContextOpsDef && includes.selfHeaderPath != "kotlinx/coroutines/CoroutineContext.hpp") {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_CONTEXT_OPS_DEFINED",
             """
-
-            #ifndef KXS_CONTEXT_OPS_DEFINED
-            #define KXS_CONTEXT_OPS_DEFINED
             namespace kotlin::coroutines {
             template <typename KxsL, typename KxsR>
                 requires (std::derived_from<std::remove_cv_t<KxsL>, CoroutineContext> &&
@@ -151,17 +137,13 @@ internal fun emitSharedHelperPreamble(
                 return kxs_cast_ctx_elem(key_raw_ptr, std::move(elem));
             }
             } // namespace kotlin::coroutines
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsSynchronizedObjectDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_SYNCHRONIZED_OBJECT_DEFINED",
             """
-
-            #ifndef KXS_SYNCHRONIZED_OBJECT_DEFINED
-            #define KXS_SYNCHRONIZED_OBJECT_DEFINED
             struct KxsSynchronizedObject {
                 mutable std::recursive_mutex kxs_sync_mutex_{};
                 KxsSynchronizedObject() = default;
@@ -177,33 +159,25 @@ internal fun emitSharedHelperPreamble(
                     return std::forward<KxsFn>(fn)();
                 }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsAutoCloseableDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_AUTOCLOSEABLE_DEFINED",
             """
-
-            #ifndef KXS_AUTOCLOSEABLE_DEFINED
-            #define KXS_AUTOCLOSEABLE_DEFINED
             class AutoCloseable {
             public:
                 virtual ~AutoCloseable() = default;
                 virtual void close() = 0;
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsArrayDequeDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_ARRAY_DEQUE_DEFINED",
             """
-
-            #ifndef KXS_ARRAY_DEQUE_DEFINED
-            #define KXS_ARRAY_DEQUE_DEFINED
             template <typename T>
             class KxsArrayDeque {
             private:
@@ -254,17 +228,13 @@ internal fun emitSharedHelperPreamble(
                 auto begin() const noexcept { return dq_.begin(); }
                 auto end() const noexcept { return dq_.end(); }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsThreadLocalDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_THREAD_LOCAL_DEFINED",
             """
-
-            #ifndef KXS_THREAD_LOCAL_DEFINED
-            #define KXS_THREAD_LOCAL_DEFINED
             template <typename T>
             class KxsThreadLocal {
             private:
@@ -286,17 +256,13 @@ internal fun emitSharedHelperPreamble(
                     map().erase(this);
                 }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsAtomicReferenceDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_ATOMIC_REFERENCE_DEFINED",
             """
-
-            #ifndef KXS_ATOMIC_REFERENCE_DEFINED
-            #define KXS_ATOMIC_REFERENCE_DEFINED
             template <typename V>
             class KxsAtomicReference {
             private:
@@ -670,17 +636,13 @@ internal fun emitSharedHelperPreamble(
                     return false;
                 }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsCopyableAtomicDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_COPYABLE_ATOMIC_DEFINED",
             """
-
-            #ifndef KXS_COPYABLE_ATOMIC_DEFINED
-            #define KXS_COPYABLE_ATOMIC_DEFINED
             template <typename T>
             class KxsCopyableAtomic {
             private:
@@ -742,17 +704,13 @@ internal fun emitSharedHelperPreamble(
                 T operator--() noexcept requires (std::is_integral_v<T> && !std::is_same_v<T, bool>) { return --val_; }
                 T operator--(int) noexcept requires (std::is_integral_v<T> && !std::is_same_v<T, bool>) { return val_--; }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsVarargDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_VARARG_DEFINED",
             """
-
-            #ifndef KXS_VARARG_DEFINED
-            #define KXS_VARARG_DEFINED
             template <typename T>
             class KxsVararg : public std::vector<T> {
             public:
@@ -779,17 +737,13 @@ internal fun emitSharedHelperPreamble(
                     (this->emplace_back(std::forward<Args>(args)), ...);
                 }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsSharedFromThisDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_SHARED_FROM_THIS_DEFINED",
             """
-
-            #ifndef KXS_SHARED_FROM_THIS_DEFINED
-            #define KXS_SHARED_FROM_THIS_DEFINED
             template <typename KxsSelf>
             inline std::shared_ptr<std::remove_cv_t<KxsSelf>> kxs_shared_from_this(KxsSelf* self) {
                 using KxsClean = std::remove_cv_t<KxsSelf>;
@@ -805,17 +759,13 @@ internal fun emitSharedHelperPreamble(
                 }
                 return std::shared_ptr<KxsClean>(mut_self, [](KxsClean*) noexcept {});
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsTimeMarkOpsDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_TIME_MARK_OPS_DEFINED",
             """
-
-            #ifndef KXS_TIME_MARK_OPS_DEFINED
-            #define KXS_TIME_MARK_OPS_DEFINED
             namespace kotlin::time {
             inline auto operator<=>(Duration a, Duration b) noexcept {
                 return a.compare_to(b) <=> 0;
@@ -857,17 +807,12 @@ internal fun emitSharedHelperPreamble(
             #endif
             #endif
             } // namespace kotlin::time
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsDarwinDispatchHelpers) {
-        out.append(
+        val darwinDispatchBody =
             """
-
-            #if defined(__APPLE__) && !defined(KXS_DARWIN_DISPATCH_HELPERS_DEFINED)
-            #define KXS_DARWIN_DISPATCH_HELPERS_DEFINED
             template <typename KxsFn>
             inline void kxs_dispatch_async(dispatch_queue_t queue, KxsFn&& fn) {
                 using FnDecayed = std::decay_t<KxsFn>;
@@ -907,17 +852,17 @@ internal fun emitSharedHelperPreamble(
                     &ctx
                 );
             }
-            #endif
-            """.trimIndent(),
+            """.trimIndent()
+        out.emitGuardedSection(
+            guardMacro = "KXS_DARWIN_DISPATCH_HELPERS_DEFINED",
+            bodyCode = darwinDispatchBody,
+            customIfCond = "defined(__APPLE__) && !defined(KXS_DARWIN_DISPATCH_HELPERS_DEFINED)",
         )
-        out.append('\n')
     }
     if (includes.needsKotlinIteratorDefs) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_KOTLIN_ITERATOR_DEFS_DEFINED",
             """
-
-            #ifndef KXS_KOTLIN_ITERATOR_DEFS_DEFINED
-            #define KXS_KOTLIN_ITERATOR_DEFS_DEFINED
             template <typename T>
             class Iterator {
             public:
@@ -957,17 +902,13 @@ internal fun emitSharedHelperPreamble(
             public:
                 virtual bool add(E element) = 0;
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsNullOperatorsDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_NULL_OPERATORS_DEFINED",
             """
-
-            #ifndef KXS_NULL_OPERATORS_DEFINED
-            #define KXS_NULL_OPERATORS_DEFINED
             template <typename KxsAny>
                 requires std::same_as<KxsAny, std::any>
             inline bool operator==(const KxsAny& a, std::nullptr_t) noexcept {
@@ -977,17 +918,13 @@ internal fun emitSharedHelperPreamble(
             constexpr bool operator==(const std::optional<KxsOptT>& o, std::nullptr_t) noexcept {
                 return !o.has_value();
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsCastHelpersDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_CAST_HELPERS_DEFINED",
             """
-
-            #ifndef KXS_CAST_HELPERS_DEFINED
-            #define KXS_CAST_HELPERS_DEFINED
             template <typename T> struct kxs_is_shared_ptr : std::false_type {};
             template <typename T> struct kxs_is_shared_ptr<std::shared_ptr<T>> : std::true_type {};
             template <typename T> inline constexpr bool kxs_is_shared_ptr_v = kxs_is_shared_ptr<std::remove_cvref_t<T>>::value;
@@ -1260,16 +1197,12 @@ internal fun emitSharedHelperPreamble(
                     }
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsAnyEqDef) {
-        out.append(
+        val anyEqBody =
             """
-            #ifndef KXS_ANY_EQ_DEFINED
-            #define KXS_ANY_EQ_DEFINED
             template <typename KxsT>
             inline bool kxs_is_null_any_or_ptr(const KxsT& v) noexcept {
                 using D = std::remove_cvref_t<KxsT>;
@@ -1418,17 +1351,17 @@ internal fun emitSharedHelperPreamble(
                     return kxs_ptr(lhs) == kxs_ptr(rhs);
                 }
             }
-            #endif
-            """.trimIndent(),
+            """.trimIndent()
+        out.emitGuardedSection(
+            guardMacro = "KXS_ANY_EQ_DEFINED",
+            bodyCode = anyEqBody,
+            leadingNewline = false,
         )
-        out.append('\n')
     }
     if (includes.needsNullUnwrapDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_NULL_UNWRAP_DEFINED",
             """
-
-            #ifndef KXS_NULL_UNWRAP_DEFINED
-            #define KXS_NULL_UNWRAP_DEFINED
             template <typename KxsVal>
             inline bool kxs_is_null(const KxsVal& v) {
                 using KxsDecayed = std::remove_cvref_t<KxsVal>;
@@ -1457,17 +1390,13 @@ internal fun emitSharedHelperPreamble(
                     return std::forward<KxsOpt>(v);
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsResultHelpersDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_RESULT_HELPERS_DEFINED",
             """
-
-            #ifndef KXS_RESULT_HELPERS_DEFINED
-            #define KXS_RESULT_HELPERS_DEFINED
             template <typename KxsExc>
             inline std::exception_ptr kxs_to_exception_ptr(KxsExc&& e) {
                 using KxsExcD = std::remove_cvref_t<KxsExc>;
@@ -1532,17 +1461,13 @@ internal fun emitSharedHelperPreamble(
                     }
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsSuspendBoxHelpersDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_SUSPEND_BOX_HELPERS_DEFINED",
             """
-
-            #ifndef KXS_SUSPEND_BOX_HELPERS_DEFINED
-            #define KXS_SUSPEND_BOX_HELPERS_DEFINED
             template <typename KxsT>
             struct kxs_box_is_optional : std::false_type {};
             template <typename KxsT>
@@ -1667,17 +1592,13 @@ internal fun emitSharedHelperPreamble(
                     return kxs_box_suspend_result<SafeT>(block(kxs_typed_ucont));
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsCoroutineIntrinsicsBridgeDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_COROUTINE_INTRINSICS_BRIDGE_DEFINED",
             """
-
-            #ifndef KXS_COROUTINE_INTRINSICS_BRIDGE_DEFINED
-            #define KXS_COROUTINE_INTRINSICS_BRIDGE_DEFINED
             template <typename KxsContT>
             kotlin::coroutines::Continuation<KxsContT>* kxs_cont_base_probe(
                 kotlin::coroutines::Continuation<KxsContT>*
@@ -1909,17 +1830,13 @@ internal fun emitSharedHelperPreamble(
                     kotlin::coroutines::resume(cont, std::forward<KxsVal>(val));
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsIterableHelpersDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_ITERABLE_HELPERS_DEFINED",
             """
-
-            #ifndef KXS_ITERABLE_HELPERS_DEFINED
-            #define KXS_ITERABLE_HELPERS_DEFINED
             template <typename KxsPtr>
             struct KxsPtrRange {
                 KxsPtr ptr;
@@ -1979,17 +1896,13 @@ internal fun emitSharedHelperPreamble(
                     return std::forward<T>(x);
                 }
             }
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsStringBuilderDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_STRING_BUILDER_DEFINED",
             """
-
-            #ifndef KXS_STRING_BUILDER_DEFINED
-            #define KXS_STRING_BUILDER_DEFINED
             struct KxsStringBuilder {
                 std::string buf_{};
 
@@ -2064,17 +1977,13 @@ internal fun emitSharedHelperPreamble(
                 void clear() noexcept { buf_.clear(); }
                 std::string to_string() const { return buf_; }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
     }
     if (includes.needsEmptyContainersDef) {
-        out.append(
+        out.emitGuardedSection(
+            "KXS_EMPTY_CONTAINERS_DEFINED",
             """
-
-            #ifndef KXS_EMPTY_CONTAINERS_DEFINED
-            #define KXS_EMPTY_CONTAINERS_DEFINED
             struct KxsEmptyList {
                 const int* begin() const noexcept { return nullptr; }
                 const int* end() const noexcept { return nullptr; }
@@ -2099,9 +2008,29 @@ internal fun emitSharedHelperPreamble(
                 template <typename K, typename V>
                 operator std::unordered_map<K, V>() const { return {}; }
             };
-            #endif
             """.trimIndent(),
         )
-        out.append('\n')
+    }
+}
+
+private fun CppTokenEmitter.emitGuardedSection(
+    guardMacro: String,
+    bodyCode: String,
+    leadingNewline: Boolean = true,
+    customIfCond: String? = null,
+) {
+    if (leadingNewline) {
+        newline()
+    }
+    if (customIfCond != null) {
+        emitPreprocessor("if", customIfCond)
+        emitPreprocessor("define", guardMacro)
+        emitRawCode(bodyCode)
+        ensureTrailingNewline()
+        emitPreprocessor("endif")
+    } else {
+        emitIncludeGuard(guardMacro) {
+            emitRawCode(bodyCode)
+        }
     }
 }

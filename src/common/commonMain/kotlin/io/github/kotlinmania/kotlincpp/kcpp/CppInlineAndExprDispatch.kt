@@ -1477,19 +1477,20 @@ internal fun CppExprAndStmtEmitter.checkInlineIifeEligibility(
     return InlineIifeEligibility(canEmitIife = canEmitIife, hasLambdaOwnReturn = hasLambdaOwnReturn)
 }
 
-internal fun CppExprAndStmtEmitter.wrapNullableCppType(nonNullCpp: String): String =
-    if (nonNullCpp.endsWith("*") ||
-        nonNullCpp.startsWith("std::shared_ptr<") ||
-        nonNullCpp.startsWith("std::optional<") ||
-        nonNullCpp.startsWith("std::function<") ||
-        nonNullCpp == "std::any" ||
-        nonNullCpp == "std::exception_ptr"
+internal fun CppExprAndStmtEmitter.wrapNullableCppType(nonNullCpp: String): String {
+    val parsed = CppType.parseInternal(nonNullCpp)
+    return if (parsed.isPointerLike ||
+        parsed.isOptional ||
+        parsed.isStdFunction ||
+        parsed.isStdAny ||
+        parsed.isExceptionPtr
     ) {
         nonNullCpp
     } else {
         includes.addSystem("optional")
         "std::optional<$nonNullCpp>"
     }
+}
 
 internal fun CppExprAndStmtEmitter.extractFirstContainerElementProjection(typeOrCallFrame: PacketFrame): PacketFrame? {
     val unwrapped = unwrapTransparentFrame(typeOrCallFrame)

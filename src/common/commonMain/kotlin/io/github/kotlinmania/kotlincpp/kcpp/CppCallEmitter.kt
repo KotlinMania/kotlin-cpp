@@ -2001,25 +2001,26 @@ internal fun CppExprAndStmtEmitter.inferMissingFunctionTypeArgs(
             }
         }
     }
-    val normTarget =
+    val parsedTarget =
         targetCppForInference
             ?.trim()
-            ?.removePrefix("[[noreturn]] ")
-            ?.takeIf { it.isNotEmpty() && it != "auto" && it != "std::any" && it != "void*" }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { CppType.parseInternal(it).stripNoReturn() }
+            ?.takeIf { !it.isAuto && !it.isStdAny && !it.isVoidPtr }
     val retIdx = fn.returnTypeFrameIndex
-    if (normTarget != null && retIdx != null) {
+    if (parsedTarget != null && retIdx != null) {
         val retFrame = stream.frames[retIdx]
         val retSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, retFrame)
         if (retSimple != null) {
             val directIdx = fn.typeParams.indexOfFirst { it.name == retSimple }
             if (directIdx >= 0 && inferred[directIdx] == null) {
-                val unwrapped = normTarget.removePrefix("const ").removeSuffix("&").trim()
+                val strippedTarget = parsedTarget.stripCvRef()
                 inferred[directIdx] =
-                    if (unwrapped == "void" && fnUsesTypeParamInSuspendOrTemplate(fn, retSimple)) {
+                    if (strippedTarget.isVoid && fnUsesTypeParamInSuspendOrTemplate(fn, retSimple)) {
                         includes.addProject("kotlinx/coroutines/Unit.hpp")
                         "kotlin::Unit"
                     } else {
-                        unwrapped
+                        strippedTarget.render()
                     }
             } else {
                 val cppBase =
@@ -2031,7 +2032,7 @@ internal fun CppExprAndStmtEmitter.inferMissingFunctionTypeArgs(
                             includes = includes,
                         )
                         ?: CppNamingPolicy.toTypeName(retSimple)
-                val outerArgs = extractOuterTemplateArgsForBase(normTarget, cppBase)
+                val outerArgs = extractOuterTemplateArgsForBase(parsedTarget.render(), cppBase)
                 val retTypeArgFrames = extractUserTypeArgTypeFrames(retFrame)
                 if (outerArgs != null && outerArgs.size == retTypeArgFrames.size) {
                     for (i in retTypeArgFrames.indices) {
@@ -2131,10 +2132,10 @@ internal fun CppExprAndStmtEmitter.doesFnMatchRawArgs(
 
 internal fun CppExprAndStmtEmitter.isOptionalOrAnyParamType(paramTypeFrameIdx: Int?): String? {
     val tfIdx = paramTypeFrameIdx ?: return null
-    val paramCppT = translateType(stream.frames[tfIdx], CppTypePosition.PARAMETER)
+    val parsed = CppType.parseInternal(translateType(stream.frames[tfIdx], CppTypePosition.PARAMETER)).stripCvRef()
     return when {
-        paramCppT.startsWith("std::optional<") || paramCppT.startsWith("const std::optional<") -> "optional"
-        paramCppT == "std::any" || paramCppT == "const std::any&" -> "any"
+        parsed.isOptional -> "optional"
+        parsed.isStdAny -> "any"
         else -> null
     }
 }

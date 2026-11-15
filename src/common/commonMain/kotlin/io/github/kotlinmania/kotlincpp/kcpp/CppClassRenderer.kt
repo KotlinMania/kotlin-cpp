@@ -398,15 +398,7 @@ internal fun CppDeclarationRenderer.renderValueClass(
         if (underlyingParam?.defaultExprFrameIndex != null) {
             val emitter = CppExprAndStmtEmitter(bundle, enclosingClass = cls, inDefaultParameterExpr = true)
             val rawDef = emitter.emitExpression(stream.frames[underlyingParam.defaultExprFrameIndex])
-            val coerced =
-                if (rawDef == "nullptr" && valType.startsWith("std::optional<")) {
-                    includes.addSystem("optional")
-                    "std::nullopt"
-                } else if (rawDef == "nullptr" && valType == "std::any") {
-                    "{}"
-                } else {
-                    rawDef
-                }
+            val coerced = CppType.parseInternal(valType).coerceNullDefaultExpr(rawDef, includes, coerceStdAnyToBraces = true)
             " = $coerced"
         } else {
             ""
@@ -596,13 +588,7 @@ internal fun CppDeclarationRenderer.renderDataClass(
                     val def =
                         if (defIdx != null) {
                             val rawDef = emitter.emitExpression(stream.frames[defIdx])
-                            val coercedDef =
-                                if (rawDef == "nullptr" && paramTypes[i].startsWith("std::optional<")) {
-                                    includes.addSystem("optional")
-                                    "std::nullopt"
-                                } else {
-                                    rawDef
-                                }
+                            val coercedDef = CppType.parseInternal(paramTypes[i]).coerceNullDefaultExpr(rawDef, includes)
                             " = $coercedDef"
                         } else {
                             ""
@@ -927,22 +913,31 @@ internal fun CppDeclarationRenderer.renderGeneralClass(
             append(indent).append("};\n\n")
         }
         if (needsPredeclaredCancellableFlow) {
-            append("#ifndef KXS_CANCELLABLE_FLOW_DEFINED\n")
-            append("#define KXS_CANCELLABLE_FLOW_DEFINED\n")
-            append("template <typename T>\nclass CancellableFlow : public virtual Flow<T> {\npublic:\n    virtual ~CancellableFlow() = default;\n};\n")
-            append("#endif\n\n")
+            append(
+                buildCppTokens {
+                    emitIncludeGuard("KXS_CANCELLABLE_FLOW_DEFINED") {
+                        emitTemplateDeclaration(listOf("typename T"))
+                        emitRawCode("class CancellableFlow : public virtual Flow<T> {\npublic:\n    virtual ~CancellableFlow() = default;\n};")
+                        newline()
+                    }
+                    newline()
+                },
+            )
         }
-        if (isCancellableFlowMarker) {
-            append("#ifndef KXS_CANCELLABLE_FLOW_DEFINED\n")
-            append("#define KXS_CANCELLABLE_FLOW_DEFINED\n")
-        }
-        if (isEventLoopImplPlatformGuard) {
-            append("#ifndef KXS_EXPECT_SUPER_CLASS_EventLoopImplPlatform\n")
-            append("#define KXS_EXPECT_SUPER_CLASS_EventLoopImplPlatform\n")
-        }
-        if (isNotCompletedMarker) {
-            append("#ifndef KXS_NOT_COMPLETED_DEFINED\n")
-            append("#define KXS_NOT_COMPLETED_DEFINED\n")
+        val classGuardMacro =
+            when {
+                isCancellableFlowMarker -> "KXS_CANCELLABLE_FLOW_DEFINED"
+                isEventLoopImplPlatformGuard -> "KXS_EXPECT_SUPER_CLASS_EventLoopImplPlatform"
+                isNotCompletedMarker -> "KXS_NOT_COMPLETED_DEFINED"
+                else -> null
+            }
+        if (classGuardMacro != null) {
+            append(
+                buildCppTokens {
+                    emitPreprocessor("ifndef", classGuardMacro)
+                    emitPreprocessor("define", classGuardMacro)
+                },
+            )
         }
         if (outOfLineOwnerQual == null) {
             appendHoistedNestedDefinitions(cls, indent, this)
@@ -1333,13 +1328,7 @@ internal fun CppDeclarationRenderer.renderGeneralClass(
                 val def =
                     if (defIdx != null) {
                         val rawDef = emitter.emitExpression(stream.frames[defIdx])
-                        val coercedDef =
-                            if (rawDef == "nullptr" && t.startsWith("std::optional<")) {
-                                includes.addSystem("optional")
-                                "std::nullopt"
-                            } else {
-                                rawDef
-                            }
+                        val coercedDef = CppType.parseInternal(t).coerceNullDefaultExpr(rawDef, includes)
                         " = $coercedDef"
                     } else {
                         ""
@@ -1406,58 +1395,30 @@ internal fun CppDeclarationRenderer.renderGeneralClass(
                 append(' ').append(inlineCtorBody ?: "{}").append('\n')
             }
             if (cls.kind == KtClassKind.SEALED_CLASS) {
-                append(inner)
-                    .append(cls.cppName)
-                    .append("(const ")
-                    .append(cls.cppName)
-                    .append("&) = default;\n")
-                append(inner)
-                    .append(cls.cppName)
-                    .append('(')
-                    .append(cls.cppName)
-                    .append("&&) = default;\n")
-                append(inner)
-                    .append(cls.cppName)
-                    .append("& operator=(const ")
-                    .append(cls.cppName)
-                    .append("&) = default;\n")
-                append(inner)
-                    .append(cls.cppName)
-                    .append("& operator=(")
-                    .append(cls.cppName)
-                    .append("&&) = default;\n")
-                append(indent).append("public:\n")
-                if (cls.superTypeFrameIndices.isEmpty() && cls.primaryConstructorParams.isEmpty() && cls.memberPropertyFrameIndices.isEmpty()) {
-                    append(inner).append("bool operator==(const ").append(cls.cppName).append("&) const = default;\n")
-                }
+                append(
+                    buildCppTokens(baseIndent = indent) {
+                        emitSealedSpecialMembers(
+                            cppClassName = cls.cppName,
+                            includeDefaultCtor = false,
+                            includeDefaultEq =
+                                cls.superTypeFrameIndices.isEmpty() &&
+                                    cls.primaryConstructorParams.isEmpty() &&
+                                    cls.memberPropertyFrameIndices.isEmpty(),
+                        )
+                    },
+                )
             }
         } else if (cls.kind == KtClassKind.SEALED_CLASS) {
-            append(indent).append("protected:\n")
-            append(inner).append(cls.cppName).append("() = default;\n")
-            append(inner)
-                .append(cls.cppName)
-                .append("(const ")
-                .append(cls.cppName)
-                .append("&) = default;\n")
-            append(inner)
-                .append(cls.cppName)
-                .append('(')
-                .append(cls.cppName)
-                .append("&&) = default;\n")
-            append(inner)
-                .append(cls.cppName)
-                .append("& operator=(const ")
-                .append(cls.cppName)
-                .append("&) = default;\n")
-            append(inner)
-                .append(cls.cppName)
-                .append("& operator=(")
-                .append(cls.cppName)
-                .append("&&) = default;\n")
-            append(indent).append("public:\n")
-            if (cls.superTypeFrameIndices.isEmpty() && cls.memberPropertyFrameIndices.isEmpty()) {
-                append(inner).append("bool operator==(const ").append(cls.cppName).append("&) const = default;\n")
-            }
+            append(
+                buildCppTokens(baseIndent = indent) {
+                    emitSealedSpecialMembers(
+                        cppClassName = cls.cppName,
+                        includeDefaultCtor = true,
+                        includeDefaultEq =
+                            cls.superTypeFrameIndices.isEmpty() && cls.memberPropertyFrameIndices.isEmpty(),
+                    )
+                },
+            )
         } else if (!bundle.isDocExample && hasStdRuntimeErrorBase(cls)) {
             append('\n').append(inner).append(cls.cppName).append("() : std::runtime_error(\"\") {}\n")
         }
@@ -1638,7 +1599,7 @@ internal fun CppDeclarationRenderer.renderGeneralClass(
 
         append(indent).append("};\n")
         if (isCancellableFlowMarker || isEventLoopImplPlatformGuard || isNotCompletedMarker) {
-            append("#endif\n")
+            append(buildCppTokens { emitPreprocessor("endif") })
         }
 
         for (deferredIdx in deferredOutOfLineNested) {

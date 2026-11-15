@@ -123,11 +123,7 @@ internal fun CppDeclarationRenderer.resolveExtensionReceiverFrameContext(rIdx: I
     val rawSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, rFrame)
     val resolvedSimple = rawSimple?.let { bundle.symbols.importAliases[it] ?: it }
     val rCls = rawSimple?.let { symbols.classesByName[it] } ?: resolvedSimple?.let { symbols.classesByName[it] }
-    val strippedR = rCppType.removePrefix("const ").removeSuffix("&").trim()
-    val rIsPtr =
-        strippedR.endsWith("*") ||
-            strippedR.startsWith("std::shared_ptr<") ||
-            strippedR.startsWith("std::unique_ptr<")
+    val rIsPtr = CppType.parseInternal(rCppType).stripCvRef().isPointerLike
     return Triple(rCls, rIsPtr, resolvedSimple ?: rawSimple)
 }
 
@@ -272,18 +268,7 @@ internal fun CppDeclarationRenderer.buildConstructorInitializerList(
                             ?.let { emitter.emitExpression(it) }
                     }
             if (isStdRuntimeError) {
-                val msgExpr =
-                    if (args.isEmpty()) {
-                        "\"\""
-                    } else {
-                        includes.addSystem("string")
-                        includes.addSystem("type_traits")
-                        "([&](const auto& kxs_m) -> std::string { " +
-                            "if constexpr (std::is_convertible_v<decltype(kxs_m), std::string>) return std::string(kxs_m); " +
-                            "else if constexpr (requires { kxs_m.value_or(\"\"); }) return kxs_m.value_or(\"\"); " +
-                            "else return \"\"; }(${args.first()}))"
-                    }
-                inits.add("$baseName($msgExpr)")
+                inits.add("$baseName(${formatStdRuntimeErrorMsgExpr(args)})")
             } else {
                 val finalArgs =
                     if (baseName.endsWith("AbstractCoroutineContextElement") ||
@@ -375,13 +360,7 @@ internal fun CppDeclarationRenderer.renderSecondaryConstructors(
             val def =
                 if (defIdx != null) {
                     val rawDef = sigEmitter.emitExpression(stream.frames[defIdx])
-                    val coercedDef =
-                        if (rawDef == "nullptr" && t.startsWith("std::optional<")) {
-                            includes.addSystem("optional")
-                            "std::nullopt"
-                        } else {
-                            rawDef
-                        }
+                    val coercedDef = CppType.parseInternal(t).coerceNullDefaultExpr(rawDef, includes)
                     " = $coercedDef"
                 } else {
                     ""
@@ -440,18 +419,7 @@ internal fun CppDeclarationRenderer.renderSecondaryConstructors(
                     val (baseName, isStdRuntimeError) =
                         bundle.typeTranslator.translateSuperBaseType(stream.frames[primarySuperIdx])
                     if (isStdRuntimeError) {
-                        val msgExpr =
-                            if (args.isEmpty()) {
-                                "\"\""
-                            } else {
-                                includes.addSystem("string")
-                                includes.addSystem("type_traits")
-                                "([&](const auto& kxs_m) -> std::string { " +
-                                    "if constexpr (std::is_convertible_v<decltype(kxs_m), std::string>) return std::string(kxs_m); " +
-                                    "else if constexpr (requires { kxs_m.value_or(\"\"); }) return kxs_m.value_or(\"\"); " +
-                                    "else return \"\"; }(${args.first()}))"
-                            }
-                        initParts.add("$baseName($msgExpr)")
+                        initParts.add("$baseName(${formatStdRuntimeErrorMsgExpr(args)})")
                     } else {
                         initParts.add("$baseName(${args.joinToString(", ")})")
                     }
@@ -624,7 +592,7 @@ internal fun CppDeclarationRenderer.renderSiblingBaseInterfaceForwarding(
                 iFn.returnTypeFrameIndex?.let {
                     bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.RETURN)
                 } ?: "void"
-            val cleanRet = retType.removePrefix("[[noreturn]] ")
+            val cleanRet = CppType.parseInternal(retType).stripNoReturn().render()
             val methodName = resolveCppFunctionOrOperatorName(iFn, cls)
             val paramsNoDefaults = buildFunctionParameterList(iFn, includeDefaults = false)
             val argForward =
@@ -762,6 +730,24 @@ internal fun CppDeclarationRenderer.renderOverloadedVirtualUsings(
     }
 }
 
+private fun CppDeclarationRenderer.formatStdRuntimeErrorMsgExpr(args: List<String>): String {
+    if (args.isEmpty()) return "\"\""
+    includes.addSystem("string")
+    includes.addSystem("type_traits")
+    return buildCppTokens {
+        emitIife(
+            capture = "&",
+            paramsDecl = "const auto& kxs_m",
+            explicitReturnType = "std::string",
+            invokeArgs = args.first(),
+            bodyCode =
+                "if constexpr (std::is_convertible_v<decltype(kxs_m), std::string>) return std::string(kxs_m); " +
+                    "else if constexpr (requires { kxs_m.value_or(\"\"); }) return kxs_m.value_or(\"\"); " +
+                    "else return \"\";",
+        )
+    }
+}
+
 internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
     cls: KtClassSymbol,
     delegatedInterfaces: List<DelegatedInterfaceInfo>,
@@ -784,20 +770,118 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
             }
         }
     }
-    val sb = StringBuilder()
+    val out = CppTokenEmitter(baseIndent = indent)
     for (di in delegatedInterfaces) {
         val arrow = if (di.isPointerField) "->" else "."
         val fieldRef = di.fieldCppName
         val baseSimple = di.superSimpleName
+
+        fun emitOverride(
+            returnType: String,
+            methodName: String,
+            paramsDecl: String = "",
+            isConst: Boolean = false,
+            isVoidReturn: Boolean = false,
+            callArgsExpr: String = "",
+        ) {
+            out.newline()
+            out.emitForwardingOverride(
+                returnType = returnType,
+                methodName = methodName,
+                paramsDecl = paramsDecl,
+                isConst = isConst,
+                isVoidReturn = isVoidReturn,
+                receiverExpr = fieldRef,
+                memberAccessOp = arrow,
+                callArgsExpr = callArgsExpr,
+            )
+        }
+
+        fun emitSuspendOverride(
+            authoringReturnType: String,
+            boxedResult: Boolean,
+            methodName: String,
+            authoringParamsDecl: String,
+            loweredLeadingParamsDecl: String,
+            loweredLeadingArgs: List<String>,
+        ) {
+            out.newline()
+            out.emitDualAbiSuspendForwardingOverride(
+                authoringReturnType = authoringReturnType,
+                boxedResult = boxedResult,
+                methodName = methodName,
+                authoringParamsDecl = authoringParamsDecl,
+                loweredLeadingParamsDecl = loweredLeadingParamsDecl,
+                receiverExpr = fieldRef,
+                memberAccessOp = arrow,
+                loweredLeadingArgs = loweredLeadingArgs,
+            )
+        }
+
+        fun emitContinuationBase(elemType: String) {
+            if ("context" !in declaredNames) {
+                declaredNames.add("context")
+                emitOverride(
+                    returnType = "std::shared_ptr<kotlin::coroutines::CoroutineContext>",
+                    methodName = "get_context",
+                    isConst = true,
+                )
+            }
+            if (("resumeWith" to 1) !in declaredFnArities) {
+                declaredFnArities.add("resumeWith" to 1)
+                emitOverride(
+                    returnType = "void",
+                    methodName = "resume_with",
+                    paramsDecl = "kotlinx::coroutines::Result<$elemType> result",
+                    isVoidReturn = true,
+                    callArgsExpr = "std::move(result)",
+                )
+            }
+        }
+
+        fun emitSegmentInvokeOnCancellation() {
+            if (("invokeOnCancellation" to 2) !in declaredFnArities) {
+                declaredFnArities.add("invokeOnCancellation" to 2)
+                includes.addProject("kotlinx/coroutines/internal/ConcurrentLinkedList.hpp")
+                includes.addSystem("cstdint")
+                includes.addSystem("memory")
+                includes.addSystem("utility")
+                emitOverride(
+                    returnType = "void",
+                    methodName = "invoke_on_cancellation",
+                    paramsDecl =
+                        "std::shared_ptr<kotlinx::coroutines::internal::Segment<void*>> segment, " +
+                            "std::int32_t index",
+                    isVoidReturn = true,
+                    callArgsExpr = "std::move(segment), index",
+                )
+            }
+        }
+
+        fun emitChannelCancel() {
+            if (("cancel" to 1) !in declaredFnArities) {
+                declaredFnArities.add("cancel" to 1)
+                emitOverride(
+                    returnType = "void",
+                    methodName = "cancel",
+                    paramsDecl =
+                        "std::optional<kotlin::coroutines::cancellation::CancellationException> cause = std::nullopt",
+                    isVoidReturn = true,
+                    callArgsExpr = "std::move(cause)",
+                )
+            }
+        }
+
         when (baseSimple) {
             "CoroutineScope" -> {
                 if ("coroutineContext" !in declaredNames) {
                     declaredNames.add("coroutineContext")
                     includes.addProject("kotlinx/coroutines/Continuation.hpp")
                     includes.addSystem("memory")
-                    sb.append(
-                        "\n${indent}std::shared_ptr<kotlin::coroutines::CoroutineContext> coroutine_context() const override " +
-                            "{ return ${fieldRef}${arrow}coroutine_context(); }\n",
+                    emitOverride(
+                        returnType = "std::shared_ptr<kotlin::coroutines::CoroutineContext>",
+                        methodName = "coroutine_context",
+                        isConst = true,
                     )
                 }
             }
@@ -809,25 +893,20 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                     includes.addSystem("cstdint")
                     includes.addSystem("memory")
                     includes.addSystem("utility")
-                    sb.append(
-                        "\n${indent}void schedule_resume_after_delay(std::int64_t time_millis, " +
-                            "std::shared_ptr<kotlinx::coroutines::CancellableContinuation<kotlin::Unit>> continuation) override " +
-                            "{ ${fieldRef}${arrow}schedule_resume_after_delay(time_millis, std::move(continuation)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "schedule_resume_after_delay",
+                        paramsDecl =
+                            "std::int64_t time_millis, " +
+                                "std::shared_ptr<kotlinx::coroutines::CancellableContinuation<kotlin::Unit>> " +
+                                "continuation",
+                        isVoidReturn = true,
+                        callArgsExpr = "time_millis, std::move(continuation)",
                     )
                 }
             }
             "Waiter" -> {
-                if (("invokeOnCancellation" to 2) !in declaredFnArities) {
-                    declaredFnArities.add("invokeOnCancellation" to 2)
-                    includes.addProject("kotlinx/coroutines/internal/ConcurrentLinkedList.hpp")
-                    includes.addSystem("cstdint")
-                    includes.addSystem("memory")
-                    includes.addSystem("utility")
-                    sb.append(
-                        "\n${indent}void invoke_on_cancellation(std::shared_ptr<kotlinx::coroutines::internal::Segment<void*>> segment, " +
-                            "std::int32_t index) override { ${fieldRef}${arrow}invoke_on_cancellation(std::move(segment), index); }\n",
-                    )
-                }
+                emitSegmentInvokeOnCancellation()
             }
             "FlowCollector" -> {
                 if ("emit" !in declaredNames) {
@@ -836,12 +915,13 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                     includes.addProject("kotlinx/coroutines/Continuation.hpp")
                     includes.addSystem("memory")
                     includes.addSystem("utility")
-                    sb.append(
-                        "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n" +
-                            "${indent}void emit($elemType value);\n\n" +
-                            "$indent[[clang::annotate(\"suspend\")]]\n" +
-                            "${indent}void* emit($elemType value, std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                            "{ return ${fieldRef}${arrow}emit(std::move(value), std::move(_kxs_completion)); }\n",
+                    emitSuspendOverride(
+                        authoringReturnType = "void",
+                        boxedResult = false,
+                        methodName = "emit",
+                        authoringParamsDecl = "$elemType value",
+                        loweredLeadingParamsDecl = "$elemType value",
+                        loweredLeadingArgs = listOf("std::move(value)"),
                     )
                 }
             }
@@ -852,14 +932,15 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 val elemType = extractTemplateArgFromType(di.superCppType)
                 if (baseSimple == "StateFlow" && "value" !in declaredNames) {
                     declaredNames.add("value")
-                    sb.append("\n$indent$elemType value() const override { return ${fieldRef}${arrow}value(); }\n")
+                    emitOverride(returnType = elemType, methodName = "value", isConst = true)
                 }
                 if ((baseSimple == "SharedFlow" || baseSimple == "StateFlow") && "replayCache" !in declaredNames) {
                     declaredNames.add("replayCache")
                     includes.addSystem("vector")
-                    sb.append(
-                        "\n${indent}std::vector<$elemType> replay_cache() const override " +
-                            "{ return ${fieldRef}${arrow}replay_cache(); }\n",
+                    emitOverride(
+                        returnType = "std::vector<$elemType>",
+                        methodName = "replay_cache",
+                        isConst = true,
                     )
                 }
                 if ("collect" !in declaredNames) {
@@ -868,20 +949,22 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                     includes.addProject("kotlinx/coroutines/flow/FlowCollector.hpp")
                     includes.addSystem("memory")
                     includes.addSystem("utility")
-                    sb.append(
-                        "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n" +
-                            "${indent}void collect(std::shared_ptr<kotlinx::coroutines::flow::FlowCollector<$elemType>> collector);\n\n" +
-                            "$indent[[clang::annotate(\"suspend\")]]\n" +
-                            "${indent}void* collect(std::shared_ptr<kotlinx::coroutines::flow::FlowCollector<$elemType>> collector, " +
-                            "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                            "{ return ${fieldRef}${arrow}collect(std::move(collector), std::move(_kxs_completion)); }\n",
+                    val collectorParam =
+                        "std::shared_ptr<kotlinx::coroutines::flow::FlowCollector<$elemType>> collector"
+                    emitSuspendOverride(
+                        authoringReturnType = "void",
+                        boxedResult = false,
+                        methodName = "collect",
+                        authoringParamsDecl = collectorParam,
+                        loweredLeadingParamsDecl = collectorParam,
+                        loweredLeadingArgs = listOf("std::move(collector)"),
                     )
                 }
             }
             "Runnable" -> {
                 if ("run" !in declaredNames) {
                     declaredNames.add("run")
-                    sb.append("\n${indent}void run() override { ${fieldRef}${arrow}run(); }\n")
+                    emitOverride(returnType = "void", methodName = "run", isVoidReturn = true)
                 }
             }
             "Continuation" -> {
@@ -890,23 +973,13 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 includes.addProject("kotlinx/coroutines/Result.hpp")
                 includes.addSystem("memory")
                 includes.addSystem("utility")
-                if ("context" !in declaredNames) {
-                    declaredNames.add("context")
-                    sb.append(
-                        "\n${indent}std::shared_ptr<kotlin::coroutines::CoroutineContext> get_context() const override " +
-                            "{ return ${fieldRef}${arrow}get_context(); }\n",
-                    )
-                }
-                if (("resumeWith" to 1) !in declaredFnArities) {
-                    declaredFnArities.add("resumeWith" to 1)
-                    sb.append(
-                        "\n${indent}void resume_with(kotlinx::coroutines::Result<$elemType> result) override " +
-                            "{ ${fieldRef}${arrow}resume_with(std::move(result)); }\n",
-                    )
-                }
+                emitContinuationBase(elemType)
             }
             "CancellableContinuation" -> {
                 val elemType = extractTemplateArgFromType(di.superCppType)
+                val fullOnCancelType =
+                    "std::function<void(std::exception_ptr, $elemType, " +
+                        "std::shared_ptr<kotlin::coroutines::CoroutineContext>)>"
                 includes.addProject("kotlinx/coroutines/CancellableContinuation.hpp")
                 includes.addProject("kotlinx/coroutines/CompletionHandler.common.hpp")
                 includes.addProject("kotlinx/coroutines/Continuation.hpp")
@@ -917,106 +990,124 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 includes.addSystem("functional")
                 includes.addSystem("memory")
                 includes.addSystem("utility")
-                if ("context" !in declaredNames) {
-                    declaredNames.add("context")
-                    sb.append(
-                        "\n${indent}std::shared_ptr<kotlin::coroutines::CoroutineContext> get_context() const override " +
-                            "{ return ${fieldRef}${arrow}get_context(); }\n",
-                    )
-                }
-                if (("resumeWith" to 1) !in declaredFnArities) {
-                    declaredFnArities.add("resumeWith" to 1)
-                    sb.append(
-                        "\n${indent}void resume_with(kotlinx::coroutines::Result<$elemType> result) override " +
-                            "{ ${fieldRef}${arrow}resume_with(std::move(result)); }\n",
-                    )
-                }
+                emitContinuationBase(elemType)
                 if ("isActive" !in declaredNames) {
                     declaredNames.add("isActive")
-                    sb.append("\n${indent}bool is_active() const override { return ${fieldRef}${arrow}is_active(); }\n")
+                    emitOverride(returnType = "bool", methodName = "is_active", isConst = true)
                 }
                 if ("isCompleted" !in declaredNames) {
                     declaredNames.add("isCompleted")
-                    sb.append("\n${indent}bool is_completed() const override { return ${fieldRef}${arrow}is_completed(); }\n")
+                    emitOverride(returnType = "bool", methodName = "is_completed", isConst = true)
                 }
                 if ("isCancelled" !in declaredNames) {
                     declaredNames.add("isCancelled")
-                    sb.append("\n${indent}bool is_cancelled() const override { return ${fieldRef}${arrow}is_cancelled(); }\n")
+                    emitOverride(returnType = "bool", methodName = "is_cancelled", isConst = true)
                 }
                 if (("tryResume" to 2) !in declaredFnArities) {
                     declaredFnArities.add("tryResume" to 2)
-                    sb.append(
-                        "\n${indent}std::any try_resume($elemType value, std::any idempotent = nullptr) override " +
-                            "{ return ${fieldRef}${arrow}try_resume(std::move(value), std::move(idempotent)); }\n",
+                    emitOverride(
+                        returnType = "std::any",
+                        methodName = "try_resume",
+                        paramsDecl = "$elemType value, std::any idempotent = nullptr",
+                        callArgsExpr = "std::move(value), std::move(idempotent)",
                     )
                 }
                 if (("tryResume" to 3) !in declaredFnArities) {
                     declaredFnArities.add("tryResume" to 3)
-                    sb.append(
-                        "\n${indent}std::any try_resume($elemType value, std::any idempotent, " +
-                            "std::function<void(std::exception_ptr, $elemType, std::shared_ptr<kotlin::coroutines::CoroutineContext>)> on_cancellation) override " +
-                            "{ return ${fieldRef}${arrow}try_resume(std::move(value), std::move(idempotent), std::move(on_cancellation)); }\n",
+                    emitOverride(
+                        returnType = "std::any",
+                        methodName = "try_resume",
+                        paramsDecl = "$elemType value, std::any idempotent, $fullOnCancelType on_cancellation",
+                        callArgsExpr = "std::move(value), std::move(idempotent), std::move(on_cancellation)",
                     )
                 }
                 if (("tryResumeWithException" to 1) !in declaredFnArities) {
                     declaredFnArities.add("tryResumeWithException" to 1)
-                    sb.append(
-                        "\n${indent}std::any try_resume_with_exception(std::exception_ptr exception) override " +
-                            "{ return ${fieldRef}${arrow}try_resume_with_exception(std::move(exception)); }\n",
+                    emitOverride(
+                        returnType = "std::any",
+                        methodName = "try_resume_with_exception",
+                        paramsDecl = "std::exception_ptr exception",
+                        callArgsExpr = "std::move(exception)",
                     )
                 }
                 if (("completeResume" to 1) !in declaredFnArities) {
                     declaredFnArities.add("completeResume" to 1)
-                    sb.append(
-                        "\n${indent}void complete_resume(std::any token) override " +
-                            "{ ${fieldRef}${arrow}complete_resume(std::move(token)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "complete_resume",
+                        paramsDecl = "std::any token",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(token)",
                     )
                 }
                 if (("initCancellability" to 0) !in declaredFnArities) {
                     declaredFnArities.add("initCancellability" to 0)
-                    sb.append("\n${indent}void init_cancellability() override { ${fieldRef}${arrow}init_cancellability(); }\n")
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "init_cancellability",
+                        isVoidReturn = true,
+                    )
                 }
                 if (("cancel" to 1) !in declaredFnArities) {
                     declaredFnArities.add("cancel" to 1)
-                    sb.append(
-                        "\n${indent}bool cancel(std::exception_ptr cause = nullptr) override " +
-                            "{ return ${fieldRef}${arrow}cancel(std::move(cause)); }\n",
+                    emitOverride(
+                        returnType = "bool",
+                        methodName = "cancel",
+                        paramsDecl = "std::exception_ptr cause = nullptr",
+                        callArgsExpr = "std::move(cause)",
                     )
                 }
                 if (("invokeOnCancellation" to 1) !in declaredFnArities) {
                     declaredFnArities.add("invokeOnCancellation" to 1)
-                    sb.append(
-                        "\n${indent}void invoke_on_cancellation(kotlinx::coroutines::CompletionHandler handler) override " +
-                            "{ ${fieldRef}${arrow}invoke_on_cancellation(std::move(handler)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "invoke_on_cancellation",
+                        paramsDecl = "kotlinx::coroutines::CompletionHandler handler",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(handler)",
                     )
                 }
                 if (("resumeUndispatched" to 2) !in declaredFnArities) {
                     declaredFnArities.add("resumeUndispatched" to 2)
-                    sb.append(
-                        "\n${indent}void resume_undispatched(const std::shared_ptr<kotlinx::coroutines::CoroutineDispatcher>& self, $elemType value) override " +
-                            "{ ${fieldRef}${arrow}resume_undispatched(self, std::move(value)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "resume_undispatched",
+                        paramsDecl =
+                            "const std::shared_ptr<kotlinx::coroutines::CoroutineDispatcher>& self, $elemType value",
+                        isVoidReturn = true,
+                        callArgsExpr = "self, std::move(value)",
                     )
                 }
                 if (("resumeUndispatchedWithException" to 2) !in declaredFnArities) {
                     declaredFnArities.add("resumeUndispatchedWithException" to 2)
-                    sb.append(
-                        "\n${indent}void resume_undispatched_with_exception(const std::shared_ptr<kotlinx::coroutines::CoroutineDispatcher>& self, std::exception_ptr exception) override " +
-                            "{ ${fieldRef}${arrow}resume_undispatched_with_exception(self, std::move(exception)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "resume_undispatched_with_exception",
+                        paramsDecl =
+                            "const std::shared_ptr<kotlinx::coroutines::CoroutineDispatcher>& self, " +
+                                "std::exception_ptr exception",
+                        isVoidReturn = true,
+                        callArgsExpr = "self, std::move(exception)",
                     )
                 }
                 if (Triple("resume", 2, false) !in declaredFnFullSigs) {
                     declaredFnFullSigs.add(Triple("resume", 2, false))
-                    sb.append(
-                        "\n${indent}void resume($elemType value, std::function<void(std::exception_ptr)> on_cancellation) override " +
-                            "{ ${fieldRef}${arrow}resume(std::move(value), std::move(on_cancellation)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "resume",
+                        paramsDecl = "$elemType value, std::function<void(std::exception_ptr)> on_cancellation",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(value), std::move(on_cancellation)",
                     )
                 }
                 if (Triple("resume", 2, true) !in declaredFnFullSigs) {
                     declaredFnFullSigs.add(Triple("resume", 2, true))
-                    sb.append(
-                        "\n${indent}void resume($elemType value, " +
-                            "std::function<void(std::exception_ptr, $elemType, std::shared_ptr<kotlin::coroutines::CoroutineContext>)> on_cancellation) override " +
-                            "{ ${fieldRef}${arrow}resume(std::move(value), std::move(on_cancellation)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "resume",
+                        paramsDecl = "$elemType value, $fullOnCancelType on_cancellation",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(value), std::move(on_cancellation)",
                     )
                 }
             }
@@ -1030,40 +1121,43 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 includes.addSystem("utility")
                 if ("context" !in declaredNames) {
                     declaredNames.add("context")
-                    sb.append(
-                        "\n${indent}std::shared_ptr<kotlin::coroutines::CoroutineContext> context() const override " +
-                            "{ return ${fieldRef}${arrow}context(); }\n",
+                    emitOverride(
+                        returnType = "std::shared_ptr<kotlin::coroutines::CoroutineContext>",
+                        methodName = "context",
+                        isConst = true,
                     )
                 }
                 if (("trySelect" to 2) !in declaredFnArities) {
                     declaredFnArities.add("trySelect" to 2)
-                    sb.append(
-                        "\n${indent}bool try_select(std::any clause_object, std::any result) override " +
-                            "{ return ${fieldRef}${arrow}try_select(std::move(clause_object), std::move(result)); }\n",
+                    emitOverride(
+                        returnType = "bool",
+                        methodName = "try_select",
+                        paramsDecl = "std::any clause_object, std::any result",
+                        callArgsExpr = "std::move(clause_object), std::move(result)",
                     )
                 }
                 if (("disposeOnCompletion" to 1) !in declaredFnArities) {
                     declaredFnArities.add("disposeOnCompletion" to 1)
-                    sb.append(
-                        "\n${indent}void dispose_on_completion(std::shared_ptr<kotlinx::coroutines::DisposableHandle> disposable_handle) override " +
-                            "{ ${fieldRef}${arrow}dispose_on_completion(std::move(disposable_handle)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "dispose_on_completion",
+                        paramsDecl = "std::shared_ptr<kotlinx::coroutines::DisposableHandle> disposable_handle",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(disposable_handle)",
                     )
                 }
                 if (("selectInRegistrationPhase" to 1) !in declaredFnArities) {
                     declaredFnArities.add("selectInRegistrationPhase" to 1)
-                    sb.append(
-                        "\n${indent}void select_in_registration_phase(std::any internal_result) override " +
-                            "{ ${fieldRef}${arrow}select_in_registration_phase(std::move(internal_result)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "select_in_registration_phase",
+                        paramsDecl = "std::any internal_result",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(internal_result)",
                     )
                 }
-                if (baseSimple == "SelectInstanceInternal" && ("invokeOnCancellation" to 2) !in declaredFnArities) {
-                    declaredFnArities.add("invokeOnCancellation" to 2)
-                    includes.addProject("kotlinx/coroutines/internal/ConcurrentLinkedList.hpp")
-                    includes.addSystem("cstdint")
-                    sb.append(
-                        "\n${indent}void invoke_on_cancellation(std::shared_ptr<kotlinx::coroutines::internal::Segment<void*>> segment, " +
-                            "std::int32_t index) override { ${fieldRef}${arrow}invoke_on_cancellation(std::move(segment), index); }\n",
-                    )
+                if (baseSimple == "SelectInstanceInternal") {
+                    emitSegmentInvokeOnCancellation()
                 }
             }
             "SendChannel",
@@ -1082,46 +1176,57 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 if (baseSimple in setOf("SendChannel", "Channel", "BroadcastChannel")) {
                     if ("isClosedForSend" !in declaredNames) {
                         declaredNames.add("isClosedForSend")
-                        sb.append("\n${indent}bool is_closed_for_send() const override { return ${fieldRef}${arrow}is_closed_for_send(); }\n")
+                        emitOverride(returnType = "bool", methodName = "is_closed_for_send", isConst = true)
                     }
                     if ("onSend" !in declaredNames) {
                         declaredNames.add("onSend")
-                        sb.append(
-                            "\n${indent}std::shared_ptr<kotlinx::coroutines::selects::SelectClause2<" +
-                                "$elemType, std::shared_ptr<kotlinx::coroutines::channels::SendChannel<$elemType>>>> " +
-                                "on_send() const override { return ${fieldRef}${arrow}on_send(); }\n",
+                        emitOverride(
+                            returnType =
+                                "std::shared_ptr<kotlinx::coroutines::selects::SelectClause2<" +
+                                    "$elemType, std::shared_ptr<kotlinx::coroutines::channels::SendChannel<" +
+                                    "$elemType>>>>",
+                            methodName = "on_send",
+                            isConst = true,
                         )
                     }
                     if (("send" to 1) !in declaredFnArities) {
                         declaredFnArities.add("send" to 1)
                         includes.addProject("kotlinx/coroutines/Continuation.hpp")
-                        sb.append(
-                            "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n" +
-                                "${indent}void send($elemType element);\n\n" +
-                                "$indent[[clang::annotate(\"suspend\")]]\n" +
-                                "${indent}void* send($elemType element, std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                                "{ return ${fieldRef}${arrow}send(std::move(element), std::move(_kxs_completion)); }\n",
+                        emitSuspendOverride(
+                            authoringReturnType = "void",
+                            boxedResult = false,
+                            methodName = "send",
+                            authoringParamsDecl = "$elemType element",
+                            loweredLeadingParamsDecl = "$elemType element",
+                            loweredLeadingArgs = listOf("std::move(element)"),
                         )
                     }
                     if (("trySend" to 1) !in declaredFnArities) {
                         declaredFnArities.add("trySend" to 1)
-                        sb.append(
-                            "\n${indent}ChannelResult<kotlin::Unit> try_send($elemType element) override " +
-                                "{ return ${fieldRef}${arrow}try_send(std::move(element)); }\n",
+                        emitOverride(
+                            returnType = "ChannelResult<kotlin::Unit>",
+                            methodName = "try_send",
+                            paramsDecl = "$elemType element",
+                            callArgsExpr = "std::move(element)",
                         )
                     }
                     if (("close" to 1) !in declaredFnArities) {
                         declaredFnArities.add("close" to 1)
-                        sb.append(
-                            "\n${indent}bool close(std::exception_ptr cause = nullptr) override " +
-                                "{ return ${fieldRef}${arrow}close(std::move(cause)); }\n",
+                        emitOverride(
+                            returnType = "bool",
+                            methodName = "close",
+                            paramsDecl = "std::exception_ptr cause = nullptr",
+                            callArgsExpr = "std::move(cause)",
                         )
                     }
                     if (("invokeOnClose" to 1) !in declaredFnArities) {
                         declaredFnArities.add("invokeOnClose" to 1)
-                        sb.append(
-                            "\n${indent}void invoke_on_close(std::function<void(std::exception_ptr)> handler) override " +
-                                "{ ${fieldRef}${arrow}invoke_on_close(std::move(handler)); }\n",
+                        emitOverride(
+                            returnType = "void",
+                            methodName = "invoke_on_close",
+                            paramsDecl = "std::function<void(std::exception_ptr)> handler",
+                            isVoidReturn = true,
+                            callArgsExpr = "std::move(handler)",
                         )
                     }
                 }
@@ -1129,95 +1234,93 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                     includes.addProject("kotlin/coroutines/cancellation/CancellationException.hpp")
                     if ("isClosedForReceive" !in declaredNames) {
                         declaredNames.add("isClosedForReceive")
-                        sb.append("\n${indent}bool is_closed_for_receive() const override { return ${fieldRef}${arrow}is_closed_for_receive(); }\n")
+                        emitOverride(returnType = "bool", methodName = "is_closed_for_receive", isConst = true)
                     }
                     if ("isEmpty" !in declaredNames) {
                         declaredNames.add("isEmpty")
-                        sb.append("\n${indent}bool is_empty() const override { return ${fieldRef}${arrow}is_empty(); }\n")
+                        emitOverride(returnType = "bool", methodName = "is_empty", isConst = true)
                     }
                     if ("onReceive" !in declaredNames) {
                         declaredNames.add("onReceive")
-                        sb.append(
-                            "\n${indent}std::shared_ptr<kotlinx::coroutines::selects::SelectClause1<$elemType>> on_receive() const override " +
-                                "{ return ${fieldRef}${arrow}on_receive(); }\n",
+                        emitOverride(
+                            returnType = "std::shared_ptr<kotlinx::coroutines::selects::SelectClause1<$elemType>>",
+                            methodName = "on_receive",
+                            isConst = true,
                         )
                     }
                     if ("onReceiveCatching" !in declaredNames) {
                         declaredNames.add("onReceiveCatching")
-                        sb.append(
-                            "\n${indent}std::shared_ptr<kotlinx::coroutines::selects::SelectClause1<ChannelResult<$elemType>>> on_receive_catching() const override " +
-                                "{ return ${fieldRef}${arrow}on_receive_catching(); }\n",
+                        emitOverride(
+                            returnType =
+                                "std::shared_ptr<kotlinx::coroutines::selects::SelectClause1<" +
+                                    "ChannelResult<$elemType>>>",
+                            methodName = "on_receive_catching",
+                            isConst = true,
                         )
                     }
                     if (("receive" to 0) !in declaredFnArities) {
                         declaredFnArities.add("receive" to 0)
                         includes.addProject("kotlinx/coroutines/Continuation.hpp")
                         if (elemType == "void*") {
-                            sb.append(
-                                "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n" +
-                                    "${indent}void* receive();\n\n" +
-                                    "$indent[[clang::annotate(\"suspend\")]]\n" +
-                                    "${indent}void* receive(std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                                    "{ return ${fieldRef}${arrow}receive(std::move(_kxs_completion)); }\n",
+                            emitSuspendOverride(
+                                authoringReturnType = "void*",
+                                boxedResult = false,
+                                methodName = "receive",
+                                authoringParamsDecl = "",
+                                loweredLeadingParamsDecl = "",
+                                loweredLeadingArgs = emptyList(),
                             )
                         } else {
                             includes.addSystem("type_traits")
                             val boxElem = "std::conditional_t<std::is_void_v<$elemType>, kotlin::Unit, $elemType>"
-                            sb.append(
-                                "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]\n" +
-                                    "$indent$boxElem receive();\n\n" +
-                                    "$indent[[clang::annotate(\"suspend\")]]\n" +
-                                    "${indent}void* receive(std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                                    "{ return ${fieldRef}${arrow}receive(std::move(_kxs_completion)); }\n",
+                            emitSuspendOverride(
+                                authoringReturnType = boxElem,
+                                boxedResult = true,
+                                methodName = "receive",
+                                authoringParamsDecl = "",
+                                loweredLeadingParamsDecl = "",
+                                loweredLeadingArgs = emptyList(),
                             )
                         }
                     }
                     if (("receiveCatching" to 0) !in declaredFnArities) {
                         declaredFnArities.add("receiveCatching" to 0)
                         includes.addProject("kotlinx/coroutines/Continuation.hpp")
-                        sb.append(
-                            "\n$indent[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]\n" +
-                                "${indent}ChannelResult<$elemType> receive_catching();\n\n" +
-                                "$indent[[clang::annotate(\"suspend\")]]\n" +
-                                "${indent}void* receive_catching(std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override " +
-                                "{ return ${fieldRef}${arrow}receive_catching(std::move(_kxs_completion)); }\n",
+                        emitSuspendOverride(
+                            authoringReturnType = "ChannelResult<$elemType>",
+                            boxedResult = true,
+                            methodName = "receive_catching",
+                            authoringParamsDecl = "",
+                            loweredLeadingParamsDecl = "",
+                            loweredLeadingArgs = emptyList(),
                         )
                     }
                     if (("tryReceive" to 0) !in declaredFnArities) {
                         declaredFnArities.add("tryReceive" to 0)
-                        sb.append("\n${indent}ChannelResult<$elemType> try_receive() override { return ${fieldRef}${arrow}try_receive(); }\n")
+                        emitOverride(
+                            returnType = "ChannelResult<$elemType>",
+                            methodName = "try_receive",
+                        )
                     }
                     if (("iterator" to 0) !in declaredFnArities) {
                         declaredFnArities.add("iterator" to 0)
-                        sb.append(
-                            "\n${indent}std::shared_ptr<ChannelIterator<$elemType>> iterator() override " +
-                                "{ return ${fieldRef}${arrow}iterator(); }\n",
+                        emitOverride(
+                            returnType = "std::shared_ptr<ChannelIterator<$elemType>>",
+                            methodName = "iterator",
                         )
                     }
-                    if (("cancel" to 1) !in declaredFnArities) {
-                        declaredFnArities.add("cancel" to 1)
-                        sb.append(
-                            "\n${indent}void cancel(std::optional<kotlin::coroutines::cancellation::CancellationException> cause = std::nullopt) override " +
-                                "{ ${fieldRef}${arrow}cancel(std::move(cause)); }\n",
-                        )
-                    }
+                    emitChannelCancel()
                 }
                 if (baseSimple == "BroadcastChannel") {
                     includes.addProject("kotlin/coroutines/cancellation/CancellationException.hpp")
                     if (("openSubscription" to 0) !in declaredFnArities) {
                         declaredFnArities.add("openSubscription" to 0)
-                        sb.append(
-                            "\n${indent}std::shared_ptr<ReceiveChannel<$elemType>> open_subscription() override " +
-                                "{ return ${fieldRef}${arrow}open_subscription(); }\n",
+                        emitOverride(
+                            returnType = "std::shared_ptr<ReceiveChannel<$elemType>>",
+                            methodName = "open_subscription",
                         )
                     }
-                    if (("cancel" to 1) !in declaredFnArities) {
-                        declaredFnArities.add("cancel" to 1)
-                        sb.append(
-                            "\n${indent}void cancel(std::optional<kotlin::coroutines::cancellation::CancellationException> cause = std::nullopt) override " +
-                                "{ ${fieldRef}${arrow}cancel(std::move(cause)); }\n",
-                        )
-                    }
+                    emitChannelCancel()
                 }
             }
             "ErrorCatching" -> {
@@ -1225,19 +1328,22 @@ internal fun CppDeclarationRenderer.renderDelegatedInterfaceForwardingMethods(
                 includes.addSystem("utility")
                 if (("hasError" to 0) !in declaredFnArities) {
                     declaredFnArities.add("hasError" to 0)
-                    sb.append("\n${indent}bool has_error() override { return ${fieldRef}${arrow}has_error(); }\n")
+                    emitOverride(returnType = "bool", methodName = "has_error")
                 }
                 if (("reportError" to 1) !in declaredFnArities) {
                     declaredFnArities.add("reportError" to 1)
-                    sb.append(
-                        "\n${indent}void report_error(std::exception_ptr error) override " +
-                            "{ ${fieldRef}${arrow}report_error(std::move(error)); }\n",
+                    emitOverride(
+                        returnType = "void",
+                        methodName = "report_error",
+                        paramsDecl = "std::exception_ptr error",
+                        isVoidReturn = true,
+                        callArgsExpr = "std::move(error)",
                     )
                 }
             }
         }
     }
-    return sb.toString()
+    return out.render()
 }
 
 internal fun CppDeclarationRenderer.ensureCreateTestResultReturn(
@@ -1278,17 +1384,19 @@ internal fun CppDeclarationRenderer.resolveNonTrivialAtomicElemType(
         af.explicitElementTypeFrameIndex?.let {
             bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.TYPE_ARGUMENT)
         } ?: af.inferredElementCppType ?: return null
-    val unwrapped =
-        if (raw.startsWith("std::optional<std::shared_ptr<") && raw.endsWith(">")) {
-            raw.removePrefix("std::optional<").removeSuffix(">")
+    val parsedRaw = CppType.parseInternal(raw)
+    val parsedUnwrapped =
+        if (parsedRaw.isOptional && parsedRaw.unwrapOptional().isSharedPtr) {
+            parsedRaw.unwrapOptional()
         } else {
-            raw
+            parsedRaw
         }
-    if (unwrapped.startsWith("std::shared_ptr<")) return unwrapped
-    if (unwrapped == "void*") return null
+    if (parsedUnwrapped.isSharedPtr) return parsedUnwrapped.render()
+    if (parsedUnwrapped.isVoidPtr) return null
+    val unwrapped = parsedUnwrapped.render()
     if (unwrapped !in CppTypeTranslator.TRIVIAL_ATOMIC_SCALAR_TYPES &&
         unwrapped !in simpleEnumCppNames &&
-        !unwrapped.endsWith("*")
+        !parsedUnwrapped.isRawPtr
     ) {
         return unwrapped
     }
@@ -1699,16 +1807,6 @@ internal fun CppDeclarationRenderer.resolveCollapsedVarianceEscapeTypeParam(
     if (!matchesUpperEscape) return null
     val ubCpp = bundle.typeTranslator.translateTypeFrame(ubFrame, CppTypePosition.TYPE_ARGUMENT)
     return tp.name to ubCpp
-}
-
-internal fun CppDeclarationRenderer.replaceWholeIdentifier(
-    text: String,
-    targetIdent: String,
-    replacement: String,
-): String {
-    if (targetIdent.isEmpty() || text.isEmpty()) return text
-    return Regex("""(?<![A-Za-z0-9_:])${Regex.escape(targetIdent)}(?![A-Za-z0-9_])""")
-        .replace(text, Regex.escapeReplacement(replacement))
 }
 
 internal fun CppDeclarationRenderer.isDeprecatedHiddenFun(sym: KtFunctionSymbol): Boolean =

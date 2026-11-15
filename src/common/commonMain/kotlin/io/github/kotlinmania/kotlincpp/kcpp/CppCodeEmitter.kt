@@ -12,12 +12,22 @@ import io.github.kotlinmania.kotlincpp.packet.buildKotlinPacketStream
  * `AtomicAndThreadLocalPass`, `FfiAndCTypePass`, `ControlFlowAndTypePass`), and emits
  * co-located `.hpp` + optional `.cpp` (+ optional `.h`/`.def` C-ABI companion files).
  */
-public fun translateKotlinToCpp(
-    source: String,
-    sourcePath: String = "<memory>",
-    config: CppTargetConfig = CppTargetConfig(),
-): CppTranslationResult {
-    val stream = buildKotlinPacketStream(source = source, sourcePath = sourcePath)
+private data class LoweredFileBundles(
+    val stream: PacketStream,
+    val symbols: SameFileSymbolTable,
+    val suspendPlan: SuspendLoweringPlan,
+    val ffiPlan: FfiAndCTypePlan,
+    val headerIncludes: CppIncludeCollector,
+    val sourceIncludes: CppIncludeCollector,
+    val headerBundle: LoweringBundle,
+    val sourceBundle: LoweringBundle,
+)
+
+private fun buildLoweredFileBundles(
+    stream: PacketStream,
+    config: CppTargetConfig,
+    isDocExample: Boolean,
+): LoweredFileBundles {
     val symbols = SameFileSymbolPass.run(stream = stream, config = config)
     val suspendPlan = SuspendStateMachinePass.run(stream = stream, symbols = symbols)
     val gcPlan = GcAndOwnershipPass.run(stream = stream, config = config, symbols = symbols, suspendPlan = suspendPlan)
@@ -27,13 +37,15 @@ public fun translateKotlinToCpp(
 
     val headerIncludes = CppIncludeCollector(selfHeaderPath = symbols.headerRelativePath)
     val sourceIncludes = CppIncludeCollector(selfHeaderPath = "")
-    for (imp in symbols.imports) {
-        imp.mappedSystemHeader?.let { headerIncludes.addSystem(it) }
-        imp.mappedProjectHeader?.let { hdr ->
-            if (CppTypeTranslator.shouldDeferHeaderInclude(hdr, headerIncludes.selfHeaderPath)) {
-                headerIncludes.addDeferredBottomProject(hdr)
-            } else {
-                headerIncludes.addProject(hdr)
+    if (!isDocExample) {
+        for (imp in symbols.imports) {
+            imp.mappedSystemHeader?.let { headerIncludes.addSystem(it) }
+            imp.mappedProjectHeader?.let { hdr ->
+                if (CppTypeTranslator.shouldDeferHeaderInclude(hdr, headerIncludes.selfHeaderPath)) {
+                    headerIncludes.addDeferredBottomProject(hdr)
+                } else {
+                    headerIncludes.addProject(hdr)
+                }
             }
         }
     }
@@ -43,70 +55,52 @@ public fun translateKotlinToCpp(
     fun recordTypeParams(tps: List<KtTypeParamInfo>) {
         for (tp in tps) {
             globalTypeParams.add(tp.name)
-            val ubIdx = tp.upperBoundFrameIndex
-            if (ubIdx != null) {
-                val ubSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[ubIdx])
-                if (ubSimple != null &&
-                    (ubSimple in symbols.sharedHierarchyTypeNames || CppTypeTranslator.isSharedHierarchyType(ubSimple))
-                ) {
-                    sharedTypeParams.add(tp.name)
+            if (!isDocExample) {
+                val ubIdx = tp.upperBoundFrameIndex
+                if (ubIdx != null) {
+                    val ubSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[ubIdx])
+                    if (ubSimple != null &&
+                        (ubSimple in symbols.sharedHierarchyTypeNames || CppTypeTranslator.isSharedHierarchyType(ubSimple))
+                    ) {
+                        sharedTypeParams.add(tp.name)
+                    }
                 }
             }
         }
     }
-    for (cls in symbols.classesByFrame.values) {
-        recordTypeParams(cls.typeParams)
-    }
-    for (fn in symbols.functionsByFrame.values) {
-        recordTypeParams(fn.typeParams)
-    }
-    for (prop in symbols.propertiesByFrame.values) {
-        recordTypeParams(prop.typeParams)
-    }
-    for (ta in symbols.typeAliasesByFrame.values) {
-        recordTypeParams(ta.typeParams)
-    }
+    for (cls in symbols.classesByFrame.values) recordTypeParams(cls.typeParams)
+    for (fn in symbols.functionsByFrame.values) recordTypeParams(fn.typeParams)
+    for (prop in symbols.propertiesByFrame.values) recordTypeParams(prop.typeParams)
+    for (ta in symbols.typeAliasesByFrame.values) recordTypeParams(ta.typeParams)
 
     val localClassNames = LinkedHashSet<String>()
     val localClassCppNames = LinkedHashMap<String, String>()
     val localClassTypeParams = LinkedHashMap<String, List<String>>()
     for (cls in symbols.classesByFrame.values) {
-        if (!FrameAstHelpers.hasModifierKeyword(stream, stream.frames[cls.frameIndex], KtTokens.EXPECT_MODIFIER_ID)) {
-            localClassNames.add(cls.kotlinName)
+        val isExpect =
+            FrameAstHelpers.hasModifierKeyword(stream, stream.frames[cls.frameIndex], KtTokens.EXPECT_MODIFIER_ID)
+        if (!isExpect) {
+            if (!isDocExample) {
+                localClassNames.add(cls.kotlinName)
+            }
             if (cls.enclosingClassFrameIndex == null) {
                 localClassCppNames[cls.kotlinName] = cls.cppName
             }
         }
-        if (cls.typeParams.isNotEmpty()) {
+        if (!isDocExample && cls.typeParams.isNotEmpty()) {
             localClassTypeParams[cls.kotlinName] = cls.typeParams.map { it.name }
         }
     }
 
-    val headerTypeTranslator =
+    val namespaceForTranslator = if (isDocExample) emptyList() else symbols.namespaceSegments
+    fun createTranslator(includes: CppIncludeCollector): CppTypeTranslator =
         CppTypeTranslator(
             stream = stream,
             config = config,
-            includes = headerIncludes,
+            includes = includes,
             polymorphicTypeNames = symbols.polymorphicTypeNames,
             typeParamNames = globalTypeParams,
-            currentNamespaceSegments = symbols.namespaceSegments,
-            localClassNames = localClassNames,
-            localClassCppNames = localClassCppNames,
-            localClassTypeParams = localClassTypeParams,
-            sharedTypeParamNames = sharedTypeParams,
-            sharedHierarchyTypeNames = symbols.sharedHierarchyTypeNames,
-            sharedPtrTypeAliases = symbols.sharedPtrTypeAliases,
-            nonInnerNestedRewrites = symbols.nonInnerNestedRewrites,
-            uniqueNonInnerNestedCppNames = symbols.uniqueNonInnerNestedCppNames,
-        )
-    val sourceTypeTranslator =
-        CppTypeTranslator(
-            stream = stream,
-            config = config,
-            includes = sourceIncludes,
-            polymorphicTypeNames = symbols.polymorphicTypeNames,
-            typeParamNames = globalTypeParams,
-            currentNamespaceSegments = symbols.namespaceSegments,
+            currentNamespaceSegments = namespaceForTranslator,
             localClassNames = localClassNames,
             localClassCppNames = localClassCppNames,
             localClassTypeParams = localClassTypeParams,
@@ -122,7 +116,10 @@ public fun translateKotlinToCpp(
         knownFnNames.add(fn.kotlinName)
     }
 
-    val headerBundle =
+    fun createBundle(
+        includes: CppIncludeCollector,
+        translator: CppTypeTranslator,
+    ): LoweringBundle =
         LoweringBundle(
             stream = stream,
             config = config,
@@ -132,40 +129,55 @@ public fun translateKotlinToCpp(
             atomicPlan = atomicPlan,
             ffiPlan = ffiPlan,
             cfPlan = cfPlan,
-            includes = headerIncludes,
-            typeTranslator = headerTypeTranslator,
+            includes = includes,
+            typeTranslator = translator,
             knownFunctionNames = knownFnNames,
+            isDocExample = isDocExample,
         )
-    val sourceBundle =
-        LoweringBundle(
-            stream = stream,
-            config = config,
-            symbols = symbols,
-            suspendPlan = suspendPlan,
-            gcPlan = gcPlan,
-            atomicPlan = atomicPlan,
-            ffiPlan = ffiPlan,
-            cfPlan = cfPlan,
-            includes = sourceIncludes,
-            typeTranslator = sourceTypeTranslator,
-            knownFunctionNames = knownFnNames,
-        )
+
+    val headerTranslator = createTranslator(headerIncludes)
+    val sourceTranslator = createTranslator(sourceIncludes)
+    return LoweredFileBundles(
+        stream = stream,
+        symbols = symbols,
+        suspendPlan = suspendPlan,
+        ffiPlan = ffiPlan,
+        headerIncludes = headerIncludes,
+        sourceIncludes = sourceIncludes,
+        headerBundle = createBundle(headerIncludes, headerTranslator),
+        sourceBundle = createBundle(sourceIncludes, sourceTranslator),
+    )
+}
+
+public fun translateKotlinToCpp(
+    source: String,
+    sourcePath: String = "<memory>",
+    config: CppTargetConfig = CppTargetConfig(),
+): CppTranslationResult {
+    val stream = buildKotlinPacketStream(source = source, sourcePath = sourcePath)
+    val lowered = buildLoweredFileBundles(stream = stream, config = config, isDocExample = false)
+    val symbols = lowered.symbols
+    val suspendPlan = lowered.suspendPlan
+    val ffiPlan = lowered.ffiPlan
+
+    fun hasActualModifier(frameIndex: Int): Boolean =
+        FrameAstHelpers.hasModifierKeyword(stream, stream.frames[frameIndex], KtTokens.ACTUAL_MODIFIER_ID)
 
     val hasActualDecls =
-        symbols.classesByFrame.keys.any { FrameAstHelpers.hasModifierKeyword(stream, stream.frames[it], KtTokens.ACTUAL_MODIFIER_ID) } ||
-            symbols.functionsByFrame.keys.any { FrameAstHelpers.hasModifierKeyword(stream, stream.frames[it], KtTokens.ACTUAL_MODIFIER_ID) } ||
-            symbols.propertiesByFrame.keys.any { FrameAstHelpers.hasModifierKeyword(stream, stream.frames[it], KtTokens.ACTUAL_MODIFIER_ID) } ||
-            symbols.typeAliasesByFrame.keys.any { FrameAstHelpers.hasModifierKeyword(stream, stream.frames[it], KtTokens.ACTUAL_MODIFIER_ID) }
+        symbols.classesByFrame.keys.any(::hasActualModifier) ||
+            symbols.functionsByFrame.keys.any(::hasActualModifier) ||
+            symbols.propertiesByFrame.keys.any(::hasActualModifier) ||
+            symbols.typeAliasesByFrame.keys.any(::hasActualModifier)
 
-    val headerRenderer = CppDeclarationRenderer(headerBundle, isHeaderMode = true)
+    val headerRenderer = CppDeclarationRenderer(lowered.headerBundle, isHeaderMode = true)
     val headerBodyText = headerRenderer.renderBodySection()
-    val sourceBodyText = CppDeclarationRenderer(sourceBundle, isHeaderMode = false).renderBodySection()
+    val sourceBodyText = CppDeclarationRenderer(lowered.sourceBundle, isHeaderMode = false).renderBodySection()
 
     val fullHeaderContent =
         assembleHeaderFile(
             symbols = symbols,
             ffiPlan = ffiPlan,
-            includes = headerIncludes,
+            includes = lowered.headerIncludes,
             bodyText = headerBodyText,
             postIncludeBodies = headerRenderer.postIncludeHeaderBodies,
             hasActualDecls = hasActualDecls,
@@ -174,7 +186,7 @@ public fun translateKotlinToCpp(
 
     val sourceArtifact =
         if (sourceBodyText.isNotBlank()) {
-            val fullSourceContent = assembleSourceFile(symbols, sourceIncludes, sourceBodyText)
+            val fullSourceContent = assembleSourceFile(symbols, lowered.sourceIncludes, sourceBodyText)
             CppFileArtifact(relativePath = symbols.sourceRelativePath, content = fullSourceContent)
         } else {
             null
@@ -182,7 +194,7 @@ public fun translateKotlinToCpp(
 
     val companions =
         if (config.emitCompanionCAbiFiles && ffiPlan.cAbiExportFunctionFrames.isNotEmpty()) {
-            emitCompanionCAbiArtifacts(headerBundle)
+            emitCompanionCAbiArtifacts(lowered.headerBundle)
         } else {
             emptyList()
         }
@@ -260,8 +272,91 @@ private val FLOW_CYCLE_SPECS: List<FlowCycleSpec> =
 
 private val FLOW_CYCLE_HEADERS: Set<String> = FLOW_CYCLE_SPECS.map { it.path }.toSet()
 
+private fun CppTokenEmitter.emitIfInclude(
+    condition: String,
+    header: String,
+) {
+    emitPreprocessor("if", condition)
+    emitIncludeProject(header)
+    emitPreprocessor("endif")
+}
+
+private fun CppTokenEmitter.emitCommonIncludesAndPreamble(
+    includes: CppIncludeCollector,
+    selfRelPath: String,
+    emitTrailingSelfInclude: Boolean,
+    ffiPlan: FfiAndCTypePlan? = null,
+) {
+    ensureHelperPreambleHeaders(includes)
+    for (sysHdr in includes.sortedSystemHeaders()) {
+        emitIncludeSystem(sysHdr)
+    }
+    for (projHdr in includes.sortedProjectHeaders()) {
+        if (projHdr == selfRelPath) continue
+        emitGuardedHasInclude(projHdr)
+    }
+    if (emitTrailingSelfInclude) {
+        emitIncludeProject(selfRelPath)
+    }
+    if (ffiPlan != null) {
+        for (preamble in ffiPlan.preambleInlineCppBlocks) {
+            newline()
+            emitRawCode(preamble.trimIndent())
+            ensureTrailingNewline()
+        }
+    }
+    emitSharedHelperPreamble(includes, this)
+}
+
+private fun CppTokenEmitter.emitCommonNamespaceAliasesAndForwards(
+    nsJoined: String,
+    includes: CppIncludeCollector,
+) {
+    if (nsJoined.isNotEmpty() && includes.needsNullOperatorsDef) {
+        emitRawCode("using ::operator==;")
+        newline(2)
+    }
+    if (includes.needsCollectionAlias) {
+        emitTemplateUsingAlias("typename E", "Collection", "std::vector<E>")
+        newline()
+    }
+    if (includes.needsSequenceAlias) {
+        emitTemplateUsingAlias("typename E", "Sequence", "KxsSequence<E>")
+        newline()
+    }
+    if (includes.needsThreadLocalDef) {
+        emitTemplateUsingAlias("typename T", "ThreadLocal", "KxsThreadLocal<T>")
+        newline()
+    }
+    if (includes.extraForwardDeclarations.isNotEmpty()) {
+        for (fwd in includes.extraForwardDeclarations) {
+            emitRawCode(fwd)
+            ensureTrailingNewline()
+        }
+        newline()
+    }
+}
+
+private fun CppTokenEmitter.emitPostIncludeBodies(
+    nsJoined: String,
+    postIncludeBodies: List<String>,
+    leadingNewline: Boolean = true,
+) {
+    if (postIncludeBodies.isEmpty()) return
+    if (leadingNewline) {
+        newline()
+    }
+    emitNamespaceBlock(nsJoined, blankLineInside = true) {
+        for ((idx, b) in postIncludeBodies.withIndex()) {
+            if (idx > 0) newline()
+            emitRawCode(b.trimEnd())
+            newline()
+        }
+    }
+}
+
 private fun appendFlowCycleFooter(
-    out: StringBuilder,
+    out: CppTokenEmitter,
     relPath: String,
     guardMacro: String,
     nsJoined: String,
@@ -271,43 +366,32 @@ private fun appendFlowCycleFooter(
     val nonCycleBottom =
         includes.sortedDeferredBottomProjectHeaders().filter { it !in FLOW_CYCLE_HEADERS }
     if (nonCycleBottom.isNotEmpty()) {
-        out.append('\n')
+        out.newline()
         for (btmHdr in nonCycleBottom) {
-            out.append("#if __has_include(\"").append(btmHdr).append("\")\n")
-            out.append("#include \"").append(btmHdr).append("\"\n")
-            out.append("#endif\n")
+            out.emitGuardedHasInclude(btmHdr)
         }
     }
     val selfIdx = FLOW_CYCLE_SPECS.indexOfFirst { it.path == relPath }
     val selfSpec = FLOW_CYCLE_SPECS[selfIdx]
-    out.append("#undef ").append(selfSpec.inMacro).append('\n')
-    out.append("#define ").append(selfSpec.completeMacro).append('\n')
-    out.append("#endif // ").append(guardMacro).append('\n')
+    out.emitPreprocessor("undef", selfSpec.inMacro)
+    out.emitPreprocessor("define", selfSpec.completeMacro)
+    out.emitPreprocessor("endif", "// $guardMacro")
 
     for (i in FLOW_CYCLE_SPECS.indices) {
         if (i == selfIdx) continue
         val spec = FLOW_CYCLE_SPECS[i]
-        out.append("\n#if ")
-        for (k in 0 until i) {
-            if (k == selfIdx) continue
-            val prereq = FLOW_CYCLE_SPECS[k]
-            out
-                .append("(defined(")
-                .append(prereq.completeMacro)
-                .append(") || !__has_include(\"")
-                .append(prereq.path)
-                .append("\")) && ")
-        }
-        out
-            .append("!defined(")
-            .append(spec.inMacro)
-            .append(") && !defined(")
-            .append(spec.completeMacro)
-            .append(") && __has_include(\"")
-            .append(spec.path)
-            .append("\")\n")
-        out.append("#include \"").append(spec.path).append("\"\n")
-        out.append("#endif\n")
+        val prereqs =
+            (0 until i)
+                .filter { it != selfIdx }
+                .joinToString("") { k ->
+                    val prereq = FLOW_CYCLE_SPECS[k]
+                    "(defined(${prereq.completeMacro}) || !__has_include(\"${prereq.path}\")) && "
+                }
+        val cond =
+            "$prereqs!defined(${spec.inMacro}) && !defined(${spec.completeMacro}) && " +
+                "__has_include(\"${spec.path}\")"
+        out.newline()
+        out.emitIfInclude(cond, spec.path)
     }
 
     val allCompleteCond =
@@ -316,16 +400,9 @@ private fun appendFlowCycleFooter(
         }
     val absSpec = FLOW_CYCLE_SPECS[0]
     if (selfIdx != 0) {
-        out
-            .append("\n#if ")
-            .append(allCompleteCond)
-            .append(" && !defined(")
-            .append(absSpec.postMacro)
-            .append(") && __has_include(\"")
-            .append(absSpec.path)
-            .append("\")\n")
-        out.append("#include \"").append(absSpec.path).append("\"\n")
-        out.append("#endif\n")
+        val cond = "$allCompleteCond && !defined(${absSpec.postMacro}) && __has_include(\"${absSpec.path}\")"
+        out.newline()
+        out.emitIfInclude(cond, absSpec.path)
     }
 
     val postPrereq =
@@ -334,38 +411,16 @@ private fun appendFlowCycleFooter(
         } else {
             "$allCompleteCond && (defined(${absSpec.postMacro}) || !__has_include(\"${absSpec.path}\"))"
         }
-    out
-        .append("\n#if ")
-        .append(postPrereq)
-        .append(" && !defined(")
-        .append(selfSpec.postMacro)
-        .append(")\n")
-    out.append("#define ").append(selfSpec.postMacro).append('\n')
-    if (postIncludeBodies.isNotEmpty()) {
-        if (nsJoined.isNotEmpty()) {
-            out.append("namespace ").append(nsJoined).append(" {\n\n")
-        }
-        for ((idx, b) in postIncludeBodies.withIndex()) {
-            if (idx > 0) out.append('\n')
-            out.append(b.trimEnd()).append('\n')
-        }
-        if (nsJoined.isNotEmpty()) {
-            out.append("\n} // namespace ").append(nsJoined).append('\n')
-        }
-    }
+    out.newline()
+    out.emitPreprocessor("if", "$postPrereq && !defined(${selfSpec.postMacro})")
+    out.emitPreprocessor("define", selfSpec.postMacro)
+    out.emitPostIncludeBodies(nsJoined, postIncludeBodies, leadingNewline = false)
     for (k in 1 until FLOW_CYCLE_SPECS.size) {
         if (k == selfIdx) continue
         val peer = FLOW_CYCLE_SPECS[k]
-        out
-            .append("#if !defined(")
-            .append(peer.postMacro)
-            .append(") && __has_include(\"")
-            .append(peer.path)
-            .append("\")\n")
-        out.append("#include \"").append(peer.path).append("\"\n")
-        out.append("#endif\n")
+        out.emitIfInclude("!defined(${peer.postMacro}) && __has_include(\"${peer.path}\")", peer.path)
     }
-    out.append("#endif // ").append(selfSpec.postMacro).append('\n')
+    out.emitPreprocessor("endif", "// ${selfSpec.postMacro}")
 }
 
 private fun assembleHeaderFile(
@@ -376,7 +431,7 @@ private fun assembleHeaderFile(
     postIncludeBodies: List<String> = emptyList(),
     hasActualDecls: Boolean = false,
 ): String =
-    buildString {
+    buildCppTokens {
         val relPath = symbols.headerRelativePath
         val isFlowCycleHeader = relPath in FLOW_CYCLE_HEADERS
         val isCycleHeader = !isFlowCycleHeader && CppTypeTranslator.isCycleParticipantHeader(relPath)
@@ -385,134 +440,83 @@ private fun assembleHeaderFile(
         val guardMacro = headerGuardMacro(relPath)
 
         if (!isFlowCycleHeader && !isCycleHeader && !isCommonHeader && !isActualHeader) {
-            append("#pragma once\n")
+            emitPragmaOnce()
         }
-        if (symbols.portLintDirectiveKind != null && symbols.portLintSourcePath != null) {
-            append("// port-lint: ")
-                .append(symbols.portLintDirectiveKind)
-                .append(' ')
-                .append(symbols.portLintSourcePath)
-                .append('\n')
+        val lintKind = symbols.portLintDirectiveKind
+        val lintPath = symbols.portLintSourcePath
+        if (lintKind != null && lintPath != null) {
+            emitPortLintHeader(lintKind, lintPath)
         }
         if (isCycleHeader) {
-            append("#ifndef ").append(guardMacro).append('\n')
-            append("#ifndef ").append(guardMacro).append("IN_P1\n")
-            append("#define ").append(guardMacro).append("IN_P1\n")
+            emitPreprocessor("ifndef", guardMacro)
+            emitPreprocessor("ifndef", "${guardMacro}IN_P1")
+            emitPreprocessor("define", "${guardMacro}IN_P1")
             if (isActualHeader) {
-                val commonHdr = pairedCommonHeaderForActual(relPath)
-                append("#if __has_include(\"").append(commonHdr).append("\")\n")
-                append("#include \"").append(commonHdr).append("\"\n")
-                append("#endif\n")
+                emitGuardedHasInclude(pairedCommonHeaderForActual(relPath))
             }
         } else if (isFlowCycleHeader || isCommonHeader || isActualHeader) {
-            append("#ifndef ").append(guardMacro).append('\n')
-            append("#define ").append(guardMacro).append('\n')
+            emitPreprocessor("ifndef", guardMacro)
+            emitPreprocessor("define", guardMacro)
             if (isActualHeader) {
-                val commonHdr = pairedCommonHeaderForActual(relPath)
-                append("#if __has_include(\"").append(commonHdr).append("\")\n")
-                append("#include \"").append(commonHdr).append("\"\n")
-                append("#endif\n")
+                emitGuardedHasInclude(pairedCommonHeaderForActual(relPath))
             }
-            when (relPath) {
-                "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp" -> append("#define KXS_IN_ABSTRACT_SHARED_FLOW_HPP_\n")
-                "kotlinx/coroutines/flow/SharedFlow.hpp" -> append("#define KXS_IN_SHARED_FLOW_HPP_\n")
-                "kotlinx/coroutines/flow/StateFlow.hpp" -> append("#define KXS_IN_STATE_FLOW_HPP_\n")
-                "kotlinx/coroutines/flow/Share.hpp" -> append("#define KXS_IN_SHARE_HPP_\n")
+            FLOW_CYCLE_SPECS.find { it.path == relPath }?.let { spec ->
+                emitPreprocessor("define", spec.inMacro)
             }
         }
 
-        ensureHelperPreambleHeaders(includes)
-        for (sysHdr in includes.sortedSystemHeaders()) {
-            if (sysHdr == "CoreFoundation/CoreFoundation.h" || sysHdr == "dispatch/dispatch.h") {
-                append("#if defined(__APPLE__)\n#include <").append(sysHdr).append(">\n#endif\n")
-            } else {
-                append("#include <").append(sysHdr).append(">\n")
-            }
-        }
-        for (projHdr in includes.sortedProjectHeaders()) {
-            if (projHdr == relPath) continue
-            append("#if __has_include(\"").append(projHdr).append("\")\n")
-            append("#include \"").append(projHdr).append("\"\n")
-            append("#endif\n")
-        }
-
-        for (preamble in ffiPlan.preambleInlineCppBlocks) {
-            append('\n').append(preamble.trimIndent()).append('\n')
-        }
-        emitSharedHelperPreamble(includes, this)
+        emitCommonIncludesAndPreamble(includes, relPath, emitTrailingSelfInclude = false, ffiPlan = ffiPlan)
 
         if (relPath == "kotlinx/coroutines/internal/ConcurrentLinkedList.hpp") {
-            append(
-                """
-                #ifndef KXS_NOT_COMPLETED_DEFINED
-                #define KXS_NOT_COMPLETED_DEFINED
-                namespace kotlinx::coroutines {
-                class NotCompleted {
-                public:
-                    virtual ~NotCompleted() = default;
-                };
-                } // namespace kotlinx::coroutines
-                #endif
-
-                """.trimIndent(),
-            )
+            emitIncludeGuard("KXS_NOT_COMPLETED_DEFINED") {
+                emitNamespaceBlock("kotlinx::coroutines", blankLineInside = false) {
+                    emitRawCode(
+                        """
+                        class NotCompleted {
+                        public:
+                            virtual ~NotCompleted() = default;
+                        };
+                        """.trimIndent(),
+                    )
+                    newline()
+                }
+            }
         }
 
         val nsJoined = symbols.namespaceSegments.joinToString("::")
-        if (nsJoined.isNotEmpty()) {
-            append("\nnamespace ").append(nsJoined).append(" {\n\n")
-        } else {
-            append('\n')
-        }
-
-        if (nsJoined.startsWith("kotlinx::coroutines::")) {
-            append("using namespace kotlinx::coroutines;\n\n")
-        }
-
-        if (symbols.imports.any { it.isWildcard && it.fqName == "kotlin.test" } && nsJoined != "kotlin::test") {
-            append("using namespace kotlin::test;\n\n")
-        }
-
-        if (nsJoined.isNotEmpty() && includes.needsNullOperatorsDef) {
-            append("using ::operator==;\n\n")
-        }
-
-        if (includes.needsCollectionAlias) {
-            append("template <typename E>\nusing Collection = std::vector<E>;\n\n")
-        }
-        if (includes.needsSequenceAlias) {
-            append("template <typename E>\nusing Sequence = KxsSequence<E>;\n\n")
-        }
-        if (includes.needsThreadLocalDef) {
-            append("template <typename T>\nusing ThreadLocal = KxsThreadLocal<T>;\n\n")
-        }
-        if (includes.extraForwardDeclarations.isNotEmpty()) {
-            for (fwd in includes.extraForwardDeclarations) {
-                append(fwd).append('\n')
+        newline()
+        emitNamespaceBlock(nsJoined, blankLineInside = true) {
+            if (nsJoined.startsWith("kotlinx::coroutines::")) {
+                emitUsingNamespace("kotlinx::coroutines")
+                newline()
             }
-            append('\n')
-        }
-        if (relPath == "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp" &&
-            !bodyText.contains("class SubscriptionCountStateFlow;")
-        ) {
-            append("class SubscriptionCountStateFlow;\n\n")
-        }
-        if (relPath == "kotlinx/coroutines/CancellableContinuationImpl.hpp" &&
-            !bodyText.contains("class ChildContinuation;")
-        ) {
-            append("class ChildContinuation;\n\n")
-        }
+            if (symbols.imports.any { it.isWildcard && it.fqName == "kotlin.test" } && nsJoined != "kotlin::test") {
+                emitUsingNamespace("kotlin::test")
+                newline()
+            }
+            emitCommonNamespaceAliasesAndForwards(nsJoined, includes)
 
-        append(bodyText.trimEnd()).append('\n')
+            if (relPath == "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp" &&
+                !bodyText.contains("class SubscriptionCountStateFlow;")
+            ) {
+                emitRawCode("class SubscriptionCountStateFlow;")
+                newline(2)
+            }
+            if (relPath == "kotlinx/coroutines/CancellableContinuationImpl.hpp" &&
+                !bodyText.contains("class ChildContinuation;")
+            ) {
+                emitRawCode("class ChildContinuation;")
+                newline(2)
+            }
 
-        if (nsJoined.isNotEmpty()) {
-            append("\n} // namespace ").append(nsJoined).append('\n')
+            emitRawCode(bodyText.trimEnd())
+            newline()
         }
 
         if (relPath == "kotlinx/coroutines/internal/Symbol.hpp") {
-            append(
+            newline()
+            emitRawCode(
                 """
-
                 template <>
                 struct std::hash<kotlinx::coroutines::internal::Symbol> {
                     std::size_t operator()(const kotlinx::coroutines::internal::Symbol& s) const noexcept {
@@ -520,70 +524,49 @@ private fun assembleHeaderFile(
                     }
                 };
                 """.trimIndent(),
-            ).append('\n')
+            )
+            newline()
         }
 
         if (isFlowCycleHeader) {
             appendFlowCycleFooter(this, relPath, guardMacro, nsJoined, includes, postIncludeBodies)
-            return@buildString
+            return@buildCppTokens
         }
 
         val deferredBottom = includes.sortedDeferredBottomProjectHeaders()
         fun emitExpectActualIncludes() {
             if (!includes.hasExpectDeclarations) return
             if (relPath.endsWith(".common.hpp")) {
-                append('\n')
+                newline()
                 when (relPath) {
-                    "kotlinx/coroutines/MultithreadedDispatchers.common.hpp" -> {
-                        append("#if __has_include(\"kotlinx/coroutines/MultithreadedDispatchers.hpp\")\n")
-                        append("#include \"kotlinx/coroutines/MultithreadedDispatchers.hpp\"\n")
-                        append("#endif\n")
-                    }
-                    "kotlinx/coroutines/CoroutineContext.common.hpp" -> {
-                        append("#if __has_include(\"kotlinx/coroutines/native/CoroutineContext.hpp\")\n")
-                        append("#include \"kotlinx/coroutines/native/CoroutineContext.hpp\"\n")
-                        append("#endif\n")
-                    }
-                    else -> {
-                        val actualHdr = relPath.removeSuffix(".common.hpp") + ".hpp"
-                        append("#if __has_include(\"").append(actualHdr).append("\")\n")
-                        append("#include \"").append(actualHdr).append("\"\n")
-                        append("#endif\n")
-                    }
+                    "kotlinx/coroutines/MultithreadedDispatchers.common.hpp" ->
+                        emitGuardedHasInclude("kotlinx/coroutines/MultithreadedDispatchers.hpp")
+                    "kotlinx/coroutines/CoroutineContext.common.hpp" ->
+                        emitGuardedHasInclude("kotlinx/coroutines/native/CoroutineContext.hpp")
+                    else ->
+                        emitGuardedHasInclude(relPath.removeSuffix(".common.hpp") + ".hpp")
                 }
             } else if (
                 relPath == "kotlinx/coroutines/Dispatchers.hpp" ||
                 relPath == "kotlinx/coroutines/native/CoroutineContext.hpp"
             ) {
-                append('\n')
-                append("#if defined(__APPLE__) && __has_include(\"kotlinx/coroutines/nativeDarwin/Dispatchers.hpp\")\n")
-                append("#include \"kotlinx/coroutines/nativeDarwin/Dispatchers.hpp\"\n")
-                append("#elif __has_include(\"kotlinx/coroutines/nativeOther/Dispatchers.hpp\")\n")
-                append("#include \"kotlinx/coroutines/nativeOther/Dispatchers.hpp\"\n")
-                append("#endif\n")
-            }
-        }
-
-        fun emitPostIncludeBodiesBlock() {
-            if (postIncludeBodies.isEmpty()) return
-            append('\n')
-            if (nsJoined.isNotEmpty()) {
-                append("namespace ").append(nsJoined).append(" {\n\n")
-            }
-            for ((idx, b) in postIncludeBodies.withIndex()) {
-                if (idx > 0) append('\n')
-                append(b.trimEnd()).append('\n')
-            }
-            if (nsJoined.isNotEmpty()) {
-                append("\n} // namespace ").append(nsJoined).append('\n')
+                newline()
+                emitPreprocessor(
+                    "if",
+                    "defined(__APPLE__) && __has_include(\"kotlinx/coroutines/nativeDarwin/Dispatchers.hpp\")",
+                )
+                emitIncludeProject("kotlinx/coroutines/nativeDarwin/Dispatchers.hpp")
+                emitPreprocessor("elif", "__has_include(\"kotlinx/coroutines/nativeOther/Dispatchers.hpp\")")
+                emitIncludeProject("kotlinx/coroutines/nativeOther/Dispatchers.hpp")
+                emitPreprocessor("endif")
             }
         }
 
         if (isCycleHeader) {
-            append("#undef ").append(guardMacro).append("IN_P1\n")
-            append("#define ").append(guardMacro).append('\n')
-            append("#endif // ").append(guardMacro).append("IN_P1\n")
-            append("#endif // ").append(guardMacro).append('\n')
+            emitPreprocessor("undef", "${guardMacro}IN_P1")
+            emitPreprocessor("define", guardMacro)
+            emitPreprocessor("endif", "// ${guardMacro}IN_P1")
+            emitPreprocessor("endif", "// $guardMacro")
 
             val btmCycleGuards =
                 buildSet {
@@ -598,30 +581,33 @@ private fun assembleHeaderFile(
                         add(headerGuardMacro("kotlinx/coroutines/internal/DispatchedContinuation.hpp"))
                     }
                 }
-            append("\n#if defined($guardMacro) && !defined(${guardMacro}P2) && !defined(${guardMacro}IN_P2)")
-            for (bg in btmCycleGuards) {
-                append(" && !defined(${bg}IN_P1)")
-            }
-            append('\n')
-            append("#define ${guardMacro}IN_P2\n")
+            val p2Cond =
+                buildString {
+                    append("defined(").append(guardMacro).append(") && !defined(").append(guardMacro)
+                    append("P2) && !defined(").append(guardMacro).append("IN_P2)")
+                    for (bg in btmCycleGuards) {
+                        append(" && !defined(").append(bg).append("IN_P1)")
+                    }
+                }
+            newline()
+            emitPreprocessor("if", p2Cond)
+            emitPreprocessor("define", "${guardMacro}IN_P2")
             if (deferredBottom.isNotEmpty()) {
-                append('\n')
+                newline()
                 for (btmHdr in deferredBottom) {
                     val isBtmCycle = btmHdr !in FLOW_CYCLE_HEADERS && CppTypeTranslator.isCycleParticipantHeader(btmHdr)
                     if (isBtmCycle) {
                         val bg = headerGuardMacro(btmHdr)
-                        append("#if !defined(${bg}P2) && !defined(${bg}IN_P2) && __has_include(\"$btmHdr\")\n")
+                        emitIfInclude("!defined(${bg}P2) && !defined(${bg}IN_P2) && __has_include(\"$btmHdr\")", btmHdr)
                     } else {
-                        append("#if __has_include(\"$btmHdr\")\n")
+                        emitGuardedHasInclude(btmHdr)
                     }
-                    append("#include \"$btmHdr\"\n")
-                    append("#endif\n")
                 }
             }
             emitExpectActualIncludes()
-            emitPostIncludeBodiesBlock()
-            append("#undef ${guardMacro}IN_P2\n")
-            append("#define ${guardMacro}P2\n")
+            emitPostIncludeBodies(nsJoined, postIncludeBodies, leadingNewline = true)
+            emitPreprocessor("undef", "${guardMacro}IN_P2")
+            emitPreprocessor("define", "${guardMacro}P2")
             val scopePeerHeaders =
                 setOf(
                     "kotlinx/coroutines/JobSupport.hpp",
@@ -637,29 +623,25 @@ private fun assembleHeaderFile(
             for (peerHdr in (CppTypeTranslator.cyclePeersForHeader(relPath) + extraScopePeers).distinct()) {
                 if (peerHdr in FLOW_CYCLE_HEADERS || peerHdr == relPath) continue
                 val pg = headerGuardMacro(peerHdr)
-                append(
-                    "#if defined($pg) && !defined(${pg}P2) && !defined(${pg}IN_P2) && " +
-                        "!defined(${pg}IN_P1) && __has_include(\"$peerHdr\")\n",
-                )
-                append("#include \"$peerHdr\"\n")
-                append("#endif\n")
+                val peerCond =
+                    "defined($pg) && !defined(${pg}P2) && !defined(${pg}IN_P2) && " +
+                        "!defined(${pg}IN_P1) && __has_include(\"$peerHdr\")"
+                emitIfInclude(peerCond, peerHdr)
             }
-            append("#endif // ").append(guardMacro).append("P2\n")
-            return@buildString
+            emitPreprocessor("endif", "// ${guardMacro}P2")
+            return@buildCppTokens
         }
 
         if (deferredBottom.isNotEmpty()) {
-            append('\n')
+            newline()
             for (btmHdr in deferredBottom) {
-                append("#if __has_include(\"").append(btmHdr).append("\")\n")
-                append("#include \"").append(btmHdr).append("\"\n")
-                append("#endif\n")
+                emitGuardedHasInclude(btmHdr)
             }
         }
         emitExpectActualIncludes()
-        emitPostIncludeBodiesBlock()
+        emitPostIncludeBodies(nsJoined, postIncludeBodies, leadingNewline = true)
         if (isCommonHeader || isActualHeader) {
-            append("#endif // ").append(guardMacro).append('\n')
+            emitPreprocessor("endif", "// $guardMacro")
         }
     }
 
@@ -684,81 +666,40 @@ private fun assembleSourceFile(
     includes: CppIncludeCollector,
     bodyText: String,
 ): String =
-    buildString {
-        if (symbols.portLintDirectiveKind != null && symbols.portLintSourcePath != null) {
-            append("// port-lint: ")
-                .append(symbols.portLintDirectiveKind)
-                .append(' ')
-                .append(symbols.portLintSourcePath)
-                .append('\n')
+    buildCppTokens {
+        val lintKind = symbols.portLintDirectiveKind
+        val lintPath = symbols.portLintSourcePath
+        if (lintKind != null && lintPath != null) {
+            emitPortLintHeader(lintKind, lintPath)
         }
-        append("#include \"").append(symbols.headerRelativePath).append("\"\n")
-        ensureHelperPreambleHeaders(includes)
-        for (sysHdr in includes.sortedSystemHeaders()) {
-            if (sysHdr == "CoreFoundation/CoreFoundation.h" || sysHdr == "dispatch/dispatch.h") {
-                append("#if defined(__APPLE__)\n#include <").append(sysHdr).append(">\n#endif\n")
-            } else {
-                append("#include <").append(sysHdr).append(">\n")
-            }
-        }
-        for (projHdr in includes.sortedProjectHeaders()) {
-            if (projHdr != symbols.headerRelativePath) {
-                append("#if __has_include(\"").append(projHdr).append("\")\n")
-                append("#include \"").append(projHdr).append("\"\n")
-                append("#endif\n")
-            }
-        }
-        append("#include \"").append(symbols.headerRelativePath).append("\"\n")
-        emitSharedHelperPreamble(includes, this)
+        emitIncludeProject(symbols.headerRelativePath)
+        emitCommonIncludesAndPreamble(includes, symbols.headerRelativePath, emitTrailingSelfInclude = true)
 
         val nsJoined = symbols.namespaceSegments.joinToString("::")
-        if (nsJoined.isNotEmpty()) {
-            append("\nnamespace ").append(nsJoined).append(" {\n\n")
-        } else {
-            append('\n')
-        }
-
-        val wildcardUsingNamespaces =
-            symbols.imports
-                .asSequence()
-                .filter { it.isWildcard && it.fqName in CPP_SOURCE_WILDCARD_NAMESPACES && it.fqName != symbols.packageName }
-                .map { imp ->
-                    imp.fqName
-                        .split('.')
-                        .joinToString("::") { CppNamingPolicy.toNamespaceSegment(it) }
-                }.distinct()
-                .toList()
-        if (wildcardUsingNamespaces.isNotEmpty()) {
-            for (uNs in wildcardUsingNamespaces) {
-                append("using namespace ").append(uNs).append(";\n")
+        newline()
+        emitNamespaceBlock(nsJoined, blankLineInside = true) {
+            val wildcardUsingNamespaces =
+                symbols.imports
+                    .asSequence()
+                    .filter {
+                        it.isWildcard &&
+                            it.fqName in CPP_SOURCE_WILDCARD_NAMESPACES &&
+                            it.fqName != symbols.packageName
+                    }.map { imp ->
+                        imp.fqName
+                            .split('.')
+                            .joinToString("::") { CppNamingPolicy.toNamespaceSegment(it) }
+                    }.distinct()
+                    .toList()
+            if (wildcardUsingNamespaces.isNotEmpty()) {
+                for (uNs in wildcardUsingNamespaces) {
+                    emitUsingNamespace(uNs)
+                }
+                newline()
             }
-            append('\n')
-        }
-
-        if (nsJoined.isNotEmpty() && includes.needsNullOperatorsDef) {
-            append("using ::operator==;\n\n")
-        }
-
-        if (includes.needsCollectionAlias) {
-            append("template <typename E>\nusing Collection = std::vector<E>;\n\n")
-        }
-        if (includes.needsSequenceAlias) {
-            append("template <typename E>\nusing Sequence = KxsSequence<E>;\n\n")
-        }
-        if (includes.needsThreadLocalDef) {
-            append("template <typename T>\nusing ThreadLocal = KxsThreadLocal<T>;\n\n")
-        }
-        if (includes.extraForwardDeclarations.isNotEmpty()) {
-            for (fwd in includes.extraForwardDeclarations) {
-                append(fwd).append('\n')
-            }
-            append('\n')
-        }
-
-        append(bodyText.trimEnd()).append('\n')
-
-        if (nsJoined.isNotEmpty()) {
-            append("\n} // namespace ").append(nsJoined).append('\n')
+            emitCommonNamespaceAliasesAndForwards(nsJoined, includes)
+            emitRawCode(bodyText.trimEnd())
+            newline()
         }
     }
 
@@ -912,24 +853,49 @@ private fun ensureHelperPreambleHeaders(includes: CppIncludeCollector) {
     }
 }
 
+private val PLAIN_C_STDINT_SCALARS: Set<String> =
+    setOf(
+        "std::int8_t",
+        "std::int16_t",
+        "std::int32_t",
+        "std::int64_t",
+        "std::uint8_t",
+        "std::uint16_t",
+        "std::uint32_t",
+        "std::uint64_t",
+        "std::size_t",
+        "std::intptr_t",
+        "std::uintptr_t",
+    )
+
 private fun emitCompanionCAbiArtifacts(bundle: LoweringBundle): List<CppFileArtifact> {
     val symbols = bundle.symbols
     val headerFileName = "${symbols.fileStem}_c_api.h"
     val defFileName = "${symbols.fileStem}.def"
 
     val cHeaderText =
-        buildString {
-            append("#pragma once\n")
-            append("#include <stdint.h>\n")
-            append("#include <stdbool.h>\n")
-            append("#include <stddef.h>\n\n")
-            append("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n")
+        buildCppTokens {
+            emitPragmaOnce()
+            emitIncludeSystem("stdint.h")
+            emitIncludeSystem("stdbool.h")
+            emitIncludeSystem("stddef.h")
+            newline()
+            emitPreprocessor("ifdef", "__cplusplus")
+            emitRawCode("extern \"C\" {")
+            newline()
+            emitPreprocessor("endif")
+            newline()
             for (fnIdx in bundle.ffiPlan.cAbiExportFunctionFrames) {
                 val fn = symbols.functionsByFrame[fnIdx] ?: continue
                 val cName = fn.cAbiSymbolName ?: continue
                 val retType =
                     fn.returnTypeFrameIndex?.let {
-                        mapCTypeForPlainC(bundle.typeTranslator.translateTypeFrame(bundle.stream.frames[it], CppTypePosition.RETURN))
+                        val translated =
+                            bundle.typeTranslator.translateTypeFrame(
+                                bundle.stream.frames[it],
+                                CppTypePosition.RETURN,
+                            )
+                        mapCTypeForPlainC(translated)
                     } ?: "void"
                 val cParams =
                     if (fn.valueParams.isEmpty()) {
@@ -938,19 +904,27 @@ private fun emitCompanionCAbiArtifacts(bundle: LoweringBundle): List<CppFileArti
                         fn.valueParams.joinToString(", ") { vp ->
                             val rawT =
                                 vp.typeFrameIndex?.let {
-                                    bundle.typeTranslator.translateTypeFrame(bundle.stream.frames[it], CppTypePosition.PARAMETER)
+                                    bundle.typeTranslator.translateTypeFrame(
+                                        bundle.stream.frames[it],
+                                        CppTypePosition.PARAMETER,
+                                    )
                                 } ?: "void*"
                             "${mapCTypeForPlainC(rawT)} ${vp.cppName}"
                         }
                     }
-                append(retType)
-                    .append(' ')
-                    .append(cName)
-                    .append('(')
-                    .append(cParams)
-                    .append(");\n")
+                emitRawCode(retType)
+                space()
+                ident(cName)
+                punct("(")
+                emitRawCode(cParams)
+                punct(");", jointToNext = false)
+                newline()
             }
-            append("\n#ifdef __cplusplus\n}\n#endif\n")
+            newline()
+            emitPreprocessor("ifdef", "__cplusplus")
+            emitRawCode("}")
+            newline()
+            emitPreprocessor("endif")
         }
 
     val defText =
@@ -965,111 +939,32 @@ private fun emitCompanionCAbiArtifacts(bundle: LoweringBundle): List<CppFileArti
     )
 }
 
+private fun stripStdIntNamespaceForPlainC(type: CppType): CppType =
+    when (type) {
+        is CppType.Scalar ->
+            if (type.cppName in PLAIN_C_STDINT_SCALARS) {
+                CppType.Scalar(type.cppName.removePrefix("std::"), type.isUnsigned)
+            } else {
+                type
+            }
+        is CppType.RawPtr -> CppType.RawPtr(stripStdIntNamespaceForPlainC(type.pointee), type.isConstPointee)
+        is CppType.Ref -> CppType.Ref(stripStdIntNamespaceForPlainC(type.referent), type.isConst, type.isRvalue)
+        is CppType.NoReturn -> CppType.NoReturn(stripStdIntNamespaceForPlainC(type.inner))
+        is CppType.SharedPtr -> CppType.SharedPtr(stripStdIntNamespaceForPlainC(type.element))
+        is CppType.UniquePtr -> CppType.UniquePtr(stripStdIntNamespaceForPlainC(type.element))
+        is CppType.Optional -> CppType.Optional(stripStdIntNamespaceForPlainC(type.element))
+        is CppType.Vector -> CppType.Vector(stripStdIntNamespaceForPlainC(type.element))
+        is CppType.Named ->
+            CppType.Named(type.qualifiers, type.simpleName, type.typeArgs.map(::stripStdIntNamespaceForPlainC))
+        else -> type
+    }
+
 private fun mapCTypeForPlainC(cppType: String): String =
-    cppType
-        .replace("std::int8_t", "int8_t")
-        .replace("std::int16_t", "int16_t")
-        .replace("std::int32_t", "int32_t")
-        .replace("std::int64_t", "int64_t")
-        .replace("std::uint8_t", "uint8_t")
-        .replace("std::uint16_t", "uint16_t")
-        .replace("std::uint32_t", "uint32_t")
-        .replace("std::uint64_t", "uint64_t")
-        .replace("std::size_t", "size_t")
-        .replace("std::intptr_t", "intptr_t")
-        .replace("std::uintptr_t", "uintptr_t")
+    stripStdIntNamespaceForPlainC(CppType.parseInternal(cppType)).render()
 
 internal fun renderDocExampleFromPacketStream(stream: PacketStream): Pair<String, String> {
-    val config = CppTargetConfig()
-    val symbols = SameFileSymbolPass.run(stream = stream, config = config)
-    val suspendPlan = SuspendStateMachinePass.run(stream = stream, symbols = symbols)
-    val gcPlan = GcAndOwnershipPass.run(stream = stream, config = config, symbols = symbols, suspendPlan = suspendPlan)
-    val atomicPlan = AtomicAndThreadLocalPass.run(stream = stream, config = config, symbols = symbols)
-    val ffiPlan = FfiAndCTypePass.run(stream = stream, symbols = symbols, suspendPlan = suspendPlan)
-    val cfPlan = ControlFlowAndTypePass.run(stream = stream, symbols = symbols)
-
-    val headerIncludes = CppIncludeCollector(selfHeaderPath = symbols.headerRelativePath)
-    val sourceIncludes = CppIncludeCollector(selfHeaderPath = "")
-    val globalTypeParams = LinkedHashSet<String>()
-    for (cls in symbols.classesByFrame.values) {
-        for (tp in cls.typeParams) globalTypeParams.add(tp.name)
-    }
-    for (fn in symbols.functionsByFrame.values) {
-        for (tp in fn.typeParams) globalTypeParams.add(tp.name)
-    }
-    for (prop in symbols.propertiesByFrame.values) {
-        for (tp in prop.typeParams) globalTypeParams.add(tp.name)
-    }
-    for (ta in symbols.typeAliasesByFrame.values) {
-        for (tp in ta.typeParams) globalTypeParams.add(tp.name)
-    }
-    val knownFnNames = LinkedHashSet<String>()
-    for (fn in symbols.functionsByFrame.values) {
-        knownFnNames.add(fn.kotlinName)
-    }
-
-    val docLocalClassCppNames =
-        symbols.classesByFrame.values
-            .filter {
-                it.enclosingClassFrameIndex == null &&
-                    !FrameAstHelpers.hasModifierKeyword(stream, stream.frames[it.frameIndex], KtTokens.EXPECT_MODIFIER_ID)
-            }.associate { it.kotlinName to it.cppName }
-
-    val headerBundle =
-        LoweringBundle(
-            stream = stream,
-            config = config,
-            symbols = symbols,
-            suspendPlan = suspendPlan,
-            gcPlan = gcPlan,
-            atomicPlan = atomicPlan,
-            ffiPlan = ffiPlan,
-            cfPlan = cfPlan,
-            includes = headerIncludes,
-            typeTranslator =
-                CppTypeTranslator(
-                    stream = stream,
-                    config = config,
-                    includes = headerIncludes,
-                    polymorphicTypeNames = symbols.polymorphicTypeNames,
-                    typeParamNames = globalTypeParams,
-                    localClassCppNames = docLocalClassCppNames,
-                    sharedHierarchyTypeNames = symbols.sharedHierarchyTypeNames,
-                    sharedPtrTypeAliases = symbols.sharedPtrTypeAliases,
-                    nonInnerNestedRewrites = symbols.nonInnerNestedRewrites,
-                    uniqueNonInnerNestedCppNames = symbols.uniqueNonInnerNestedCppNames,
-                ),
-            knownFunctionNames = knownFnNames,
-            isDocExample = true,
-        )
-    val sourceBundle =
-        LoweringBundle(
-            stream = stream,
-            config = config,
-            symbols = symbols,
-            suspendPlan = suspendPlan,
-            gcPlan = gcPlan,
-            atomicPlan = atomicPlan,
-            ffiPlan = ffiPlan,
-            cfPlan = cfPlan,
-            includes = sourceIncludes,
-            typeTranslator =
-                CppTypeTranslator(
-                    stream = stream,
-                    config = config,
-                    includes = sourceIncludes,
-                    polymorphicTypeNames = symbols.polymorphicTypeNames,
-                    typeParamNames = globalTypeParams,
-                    localClassCppNames = docLocalClassCppNames,
-                    sharedHierarchyTypeNames = symbols.sharedHierarchyTypeNames,
-                    sharedPtrTypeAliases = symbols.sharedPtrTypeAliases,
-                    nonInnerNestedRewrites = symbols.nonInnerNestedRewrites,
-                    uniqueNonInnerNestedCppNames = symbols.uniqueNonInnerNestedCppNames,
-                ),
-            knownFunctionNames = knownFnNames,
-            isDocExample = true,
-        )
-    val headerBody = CppDeclarationRenderer(headerBundle, isHeaderMode = true).renderBodySection()
-    val sourceBody = CppDeclarationRenderer(sourceBundle, isHeaderMode = false).renderBodySection()
+    val lowered = buildLoweredFileBundles(stream = stream, config = CppTargetConfig(), isDocExample = true)
+    val headerBody = CppDeclarationRenderer(lowered.headerBundle, isHeaderMode = true).renderBodySection()
+    val sourceBody = CppDeclarationRenderer(lowered.sourceBundle, isHeaderMode = false).renderBodySection()
     return headerBody to sourceBody
 }

@@ -71,97 +71,20 @@ internal fun CppDeclarationRenderer.shouldOmitInstanceFieldConst(
     }
 }
 
-internal fun CppDeclarationRenderer.replaceWholeIdentifierOutsideStrings(
-    text: String,
-    renames: Map<String, String>,
-): String {
-    if (renames.isEmpty() || text.isEmpty()) return text
-    val n = text.length
-    val out = StringBuilder(n)
-    var i = 0
-    while (i < n) {
-        val ch = text[i]
-        if (ch == '/' && i + 1 < n && text[i + 1] == '/') {
-            val nl = text.indexOf('\n', i + 2)
-            val end = if (nl < 0) n else nl + 1
-            out.append(text, i, end)
-            i = end
-            continue
-        }
-        if (ch == '/' && i + 1 < n && text[i + 1] == '*') {
-            val close = text.indexOf("*/", i + 2)
-            val end = if (close < 0) n else close + 2
-            out.append(text, i, end)
-            i = end
-            continue
-        }
-        if (ch == 'R' &&
-            i + 1 < n &&
-            text[i + 1] == '"' &&
-            (i == 0 || !(text[i - 1].isLetterOrDigit() || text[i - 1] == '_'))
-        ) {
-            val parenOpen = text.indexOf('(', i + 2)
-            if (parenOpen >= 0) {
-                val delim = text.substring(i + 2, parenOpen)
-                val endMarker = ")$delim\""
-                val close = text.indexOf(endMarker, parenOpen + 1)
-                val end = if (close < 0) n else close + endMarker.length
-                out.append(text, i, end)
-                i = end
-                continue
-            }
-        }
-        if (ch == '"' || ch == '\'') {
-            val quote = ch
-            var j = i + 1
-            while (j < n) {
-                val qc = text[j]
-                if (qc == '\\' && j + 1 < n) {
-                    j += 2
-                } else if (qc == quote) {
-                    j += 1
-                    break
-                } else {
-                    j += 1
-                }
-            }
-            out.append(text, i, j)
-            i = j
-            continue
-        }
-        if (ch.isLetter() || ch == '_') {
-            var j = i + 1
-            while (j < n && (text[j].isLetterOrDigit() || text[j] == '_')) {
-                j += 1
-            }
-            val ident = text.substring(i, j)
-            val prevIsMemberOp =
-                (i >= 1 && text[i - 1] == '.') ||
-                    (i >= 2 && text[i - 1] == '>' && text[i - 2] == '-') ||
-                    (i >= 2 && text[i - 1] == ':' && text[i - 2] == ':')
-            val repl = if (!prevIsMemberOp) renames[ident] else null
-            out.append(repl ?: ident)
-            i = j
-            continue
-        }
-        out.append(ch)
-        i += 1
-    }
-    return out.toString()
-}
-
 internal fun CppDeclarationRenderer.ensureNoreturnUnreachable(
     body: String,
     isNoreturn: Boolean,
     indent: String,
 ): String {
     if (!isNoreturn || !body.endsWith("}")) return body
-    val trimmedEnd = body.dropLast(1).trimEnd()
-    if (trimmedEnd.endsWith("__builtin_unreachable();") ||
-        trimmedEnd.endsWith("std::unreachable();")
+    val tokenStream = CppTokenStream.tokenizeCppCode(body)
+    if (!tokenStream.endsWithPunct("}")) return body
+    if (tokenStream.containsIdent("__builtin_unreachable") ||
+        (tokenStream.containsIdent("std") && tokenStream.containsIdent("unreachable"))
     ) {
         return body
     }
+    val trimmedEnd = body.dropLast(1).trimEnd()
     return when {
         trimmedEnd == "{" -> "{ __builtin_unreachable(); }"
         !body.contains('\n') -> "$trimmedEnd __builtin_unreachable(); }"
@@ -238,15 +161,22 @@ internal fun CppDeclarationRenderer.resolveSuperMethodReturnType(
                                 stream.frames[matchingFn.bodyFrameIndex],
                             )
                         else -> "void"
-                    }.removePrefix("[[noreturn]] ")
-                val subst = replaceWholeIdentifierOutsideStrings(rawRet, argMap)
+                    }.let { CppType.parseInternal(it).stripNoReturn().render() }
+                val subst =
+                    CppTokenStream
+                        .tokenizeCppCode(rawRet)
+                        .renameIdents(argMap, skipMemberAccessRhs = true)
+                        .render()
                 if (subst != "auto" && (allowVoid || subst != "void")) {
                     return subst
                 }
             }
             val deeper = resolveSuperMethodReturnType(sameSuper, sym, allowVoid, visited)
             if (deeper != null) {
-                return replaceWholeIdentifierOutsideStrings(deeper, argMap)
+                return CppTokenStream
+                    .tokenizeCppCode(deeper)
+                    .renameIdents(argMap, skipMemberAccessRhs = true)
+                    .render()
             }
             continue
         }
@@ -553,10 +483,7 @@ internal fun CppDeclarationRenderer.callsNonConstEnclosingMember(
 internal fun CppDeclarationRenderer.containsWholeWord(
     text: String,
     word: String,
-): Boolean {
-    if (word.isEmpty() || text.isEmpty()) return false
-    return Regex("""(?<![A-Za-z0-9_])${Regex.escape(word)}(?![A-Za-z0-9_])""").containsMatchIn(text)
-}
+): Boolean = CppTokenStream.tokenizeCppCode(text).containsIdent(word)
 
 internal fun CppDeclarationRenderer.superDeclaresMethod(
     cls: KtClassSymbol,

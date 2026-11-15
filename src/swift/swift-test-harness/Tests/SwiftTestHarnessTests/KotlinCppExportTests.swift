@@ -127,4 +127,48 @@ struct KotlinCppExportTests {
         #expect(result.companionArtifacts[0].relativePath == "BoxNode_c_api.h")
         #expect(result.companionArtifacts[1].relativePath == "BoxNode.def")
     }
+
+    @Test("Exercises public C++23 CppTokenEmitter, CppTokenStream, and CppType APIs via Swift Export")
+    func testCppTokenEmitterAndCppTypeSwiftExport() {
+        let emitter = kcpp.CppTokenEmitter(baseIndent: "    ")
+        _ = emitter.emitTemplateDeclaration(typeParamClauses: ["typename T"], requiresClause: "")
+        _ = emitter.emitSuspendAnnotations(implicitContinuation: true, boxedResult: false)
+        _ = emitter.newline(count: 1)
+        _ = emitter.emitForwardingOverride(
+            returnType: "bool",
+            methodName: "is_active",
+            paramsDecl: "",
+            isConst: true,
+            isVoidReturn: false,
+            receiverExpr: "delegate_",
+            memberAccessOp: "->",
+            callArgsExpr: ""
+        )
+        let rendered = emitter.render()
+        #expect(rendered.contains("    template <typename T>\n"))
+        #expect(
+            rendered.contains(
+                "    [[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]\n"
+            )
+        )
+        #expect(rendered.contains("    bool is_active() const override { return delegate_->is_active(); }\n"))
+
+        let source = "/* T */ auto fn(T x) -> T { return ptr->T; }"
+        let tokenStream = kcpp.CppTokenStream.Companion.shared.tokenizeCppCode(code: source)
+        #expect(tokenStream.containsIdent(target: "fn"))
+        #expect(!tokenStream.isEmpty())
+        let renamed = tokenStream.renameIdents(renames: ["T": "Item"], skipMemberAccessRhs: true)
+        #expect(renamed.render(baseIndent: "") == "/* T */ auto fn(Item x) -> Item { return ptr->T; }")
+
+        let parsedNoRet = kcpp.CppType.Companion.shared.parse(rendered: "[[noreturn]] void", typeParamNames: [])
+        #expect(parsedNoRet.isNoReturn)
+        #expect(parsedNoRet.stripNoReturn().isVoid)
+
+        let parsedOpt = kcpp.CppType.Companion.shared.parse(
+            rendered: "const std::optional<std::int32_t>",
+            typeParamNames: []
+        ).stripCvRef()
+        #expect(parsedOpt.isOptional)
+        #expect(parsedOpt.unwrapOptional().render() == "std::int32_t")
+    }
 }

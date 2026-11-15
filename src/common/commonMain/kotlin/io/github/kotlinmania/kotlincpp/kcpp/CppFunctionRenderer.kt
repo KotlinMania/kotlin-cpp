@@ -1,6 +1,5 @@
 package io.github.kotlinmania.kotlincpp.kcpp
 
-import io.github.kotlinmania.kotlincpp.kcpp.CppDeclarationRenderer.Companion.STAR_STD_ANY_IN_ANGLE_REGEX
 import io.github.kotlinmania.kotlincpp.kcpp.CppDeclarationRenderer.Companion.VALUE_PASS_CPP_TYPES
 import io.github.kotlinmania.kotlincpp.packet.KtNodeTypes
 import io.github.kotlinmania.kotlincpp.packet.KtTokens
@@ -65,8 +64,9 @@ internal fun CppDeclarationRenderer.renderFunction(
                 inferFunctionExpressionBodyReturnType(sym, enclosingClass, stream.frames[sym.bodyFrameIndex])
             else -> "void"
         }
-    val isNoreturn = initialRawRetType.startsWith("[[noreturn]] ")
-    val baseRetType = initialRawRetType.removePrefix("[[noreturn]] ")
+    val parsedInitialRet = CppType.parseInternal(initialRawRetType)
+    val isNoreturn = parsedInitialRet.isNoReturn
+    val baseRetType = parsedInitialRet.stripNoReturn().render()
     val overrideNonVoidRet =
         if ((baseRetType == "auto" || (isNoreturn && baseRetType == "void")) &&
             PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_OVERRIDE) &&
@@ -82,7 +82,7 @@ internal fun CppDeclarationRenderer.renderFunction(
             sym.kotlinName == "createCopy" &&
             sym.valueParams.isEmpty() &&
             PacketFlags.hasFlag(liveFlags, PacketFlags.MOD_OVERRIDE) &&
-            !preCopyRetType.startsWith("std::shared_ptr<") &&
+            !CppType.parseInternal(preCopyRetType).isSharedPtr &&
             preCopyRetType != "void" &&
             preCopyRetType != "auto"
         ) {
@@ -194,8 +194,8 @@ internal fun CppDeclarationRenderer.renderFunction(
                 tp
             }
         }
-    val retType = replaceWholeIdentifierOutsideStrings(retTypeNoShadow, shadowTpRenames)
-    val rawRetTypeEffective = replaceWholeIdentifierOutsideStrings(rawRetType, shadowTpRenames)
+    val retType = renameShadowTps(retTypeNoShadow, shadowTpRenames)
+    val rawRetTypeEffective = renameShadowTps(rawRetType, shadowTpRenames)
     val isDualAbiSuspend = isSuspend && !isCAbi && !bundle.isDocExample
     val forceInlineAuto = retType == "auto" && !isPureDecl && !isDualAbiSuspend
     if (!isHeaderMode && forceInlineAuto) return ""
@@ -276,14 +276,8 @@ internal fun CppDeclarationRenderer.renderFunction(
             hasBoxedResult = true
         }
     }
-    val renderedSuspendAuthoringRetType =
-        replaceWholeIdentifierOutsideStrings(suspendAuthoringRetType, shadowTpRenames)
-    val authoringAnn =
-        if (hasBoxedResult) {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]"
-        } else {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"
-        }
+    val renderedSuspendAuthoringRetType = renameShadowTps(suspendAuthoringRetType, shadowTpRenames)
+    val authoringAnn = renderSuspendAnn(implicitContinuation = true, boxedResult = hasBoxedResult)
 
     fun appendCompletionParam(
         baseParams: String,
@@ -345,7 +339,7 @@ internal fun CppDeclarationRenderer.renderFunction(
                 val ensuredBody = ensureCreateTestResultReturn(rawBody, sym, isDualAbiSuspend, headerIndent)
                 val noreturnSafeBody =
                     ensureNoreturnUnreachable(ensuredBody, isNoreturn && !isDualAbiSuspend, headerIndent)
-                replaceWholeIdentifierOutsideStrings(noreturnSafeBody, shadowTpRenames)
+                renameShadowTps(noreturnSafeBody, shadowTpRenames)
             } else {
                 null
             }
@@ -391,14 +385,10 @@ internal fun CppDeclarationRenderer.renderFunction(
                 comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
             )
         val paramsRendered =
-            rawParamsRendered
-                .let { p ->
-                    if (collapsedVarianceTp != null) {
-                        replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                    } else {
-                        p
-                    }
-                }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+            renameShadowTps(
+                renameCollapsedVarianceTp(rawParamsRendered, collapsedVarianceTp),
+                shadowTpRenames,
+            )
         val declDefaultedVoidPtrTps =
             if (isHeaderMode &&
                 !isPureDecl &&
@@ -454,14 +444,10 @@ internal fun CppDeclarationRenderer.renderFunction(
                         comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
                     )
                 val loweredBaseParams =
-                    rawLoweredParams
-                        .let { p ->
-                            if (collapsedVarianceTp != null) {
-                                replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                            } else {
-                                p
-                            }
-                        }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+                    renameShadowTps(
+                        renameCollapsedVarianceTp(rawLoweredParams, collapsedVarianceTp),
+                        shadowTpRenames,
+                    )
                 val loweredDeclParams =
                     appendCompletionParam(loweredBaseParams, completionUnused = isTemplateInterfaceStub)
                 val completionUnusedInInline =
@@ -526,12 +512,11 @@ internal fun CppDeclarationRenderer.renderFunction(
                             forceCancellationEqualsParam = isEqualsOverrideOnCancellationExc,
                             comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
                         ).let { p ->
-                            if (collapsedVarianceTp != null) {
-                                replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                            } else {
-                                p
-                            }
-                        }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+                            renameShadowTps(
+                                renameCollapsedVarianceTp(p, collapsedVarianceTp),
+                                shadowTpRenames,
+                            )
+                        }
                     val defCompletionUnused =
                         preRenderedHeaderBody == null ||
                             !CppComments.containsWholeWordInCode(preRenderedHeaderBody, "_kxs_completion")
@@ -635,12 +620,11 @@ internal fun CppDeclarationRenderer.renderFunction(
                             forceCancellationEqualsParam = isEqualsOverrideOnCancellationExc,
                             comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
                         ).let { p ->
-                            if (collapsedVarianceTp != null) {
-                                replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                            } else {
-                                p
-                            }
-                        }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+                            renameShadowTps(
+                                renameCollapsedVarianceTp(p, collapsedVarianceTp),
+                                shadowTpRenames,
+                            )
+                        }
                     val defText =
                         buildString {
                             val outerTps = outOfLineFnQual?.first.orEmpty()
@@ -720,7 +704,7 @@ internal fun CppDeclarationRenderer.renderFunction(
                         comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
                         scopeSeenNormalizedSigs = scopeSeenNormalizedSigs,
                     )
-                append(replaceWholeIdentifierOutsideStrings(overloadsText, shadowTpRenames))
+                append(renameShadowTps(overloadsText, shadowTpRenames))
             }
             val allowVarargListOverload =
                 bundle.isDocExample &&
@@ -745,7 +729,7 @@ internal fun CppDeclarationRenderer.renderFunction(
                         effectiveTypeParams = renderedTypeParams,
                         starPlan = starPlan,
                     )
-                append(replaceWholeIdentifierOutsideStrings(varargText, shadowTpRenames))
+                append(renameShadowTps(varargText, shadowTpRenames))
             }
             if (!isPureDecl &&
                 enclosingClass != null &&
@@ -785,8 +769,10 @@ internal fun CppDeclarationRenderer.renderFunction(
             indent = indent,
         )
     val cppBody =
-        ensureNoreturnUnreachable(rawCppBody, isNoreturn && !isDualAbiSuspend, indent)
-            .let { b -> replaceWholeIdentifierOutsideStrings(b, shadowTpRenames) }
+        renameShadowTps(
+            ensureNoreturnUnreachable(rawCppBody, isNoreturn && !isDualAbiSuspend, indent),
+            shadowTpRenames,
+        )
     val unusedCppParamNames =
         sym.valueParams
             .filter { vp -> !CppComments.containsWholeWordInCode(cppBody, vp.cppName) }
@@ -807,14 +793,10 @@ internal fun CppDeclarationRenderer.renderFunction(
             comparableOverrideParamElem = comparableElem.takeIf { isComparableOverride },
         )
     val paramsRendered =
-        rawParamsRendered
-            .let { p ->
-                if (collapsedVarianceTp != null) {
-                    replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                } else {
-                    p
-                }
-            }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+        renameShadowTps(
+            renameCollapsedVarianceTp(rawParamsRendered, collapsedVarianceTp),
+            shadowTpRenames,
+        )
     // `.cpp` out-of-line implementation
     val qualifiedName = if (qualifierPrefix.isEmpty()) methodName else "$qualifierPrefix::$methodName"
     return buildString {
@@ -899,7 +881,9 @@ internal fun CppDeclarationRenderer.renderLeafContinuationIntrinsicFunction(
             buildString {
                 append(renderProvenanceAndLeadingComments(fnFrame, indent, includeLeadingKdoc = true))
                 append(indent).append(declTps)
-                append(indent).append("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]\n")
+                append(indent)
+                    .append(renderSuspendAnn(implicitContinuation = true, boxedResult = true))
+                    .append('\n')
                 append(indent)
                     .append(boxedAuthoringRet)
                     .append(' ')
@@ -908,7 +892,9 @@ internal fun CppDeclarationRenderer.renderLeafContinuationIntrinsicFunction(
                     .append(blockParamName)
                     .append(");\n\n")
                 append(indent).append(declTps)
-                append(indent).append("[[clang::annotate(\"suspend\")]]\n")
+                append(indent)
+                    .append(renderSuspendAnn(implicitContinuation = false, boxedResult = false))
+                    .append('\n')
                 append(indent)
                     .append("void* ")
                     .append(sym.cppName)
@@ -1041,12 +1027,7 @@ internal fun CppDeclarationRenderer.renderLeafContinuationIntrinsicFunction(
         suspendAuthoringRetType = authoringRetType
         hasBoxedResult = true
     }
-    val authoringAnn =
-        if (hasBoxedResult) {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]"
-        } else {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"
-        }
+    val authoringAnn = renderSuspendAnn(implicitContinuation = true, boxedResult = hasBoxedResult)
     val contElemType =
         if (sym.returnTypeFrameIndex != null && leaf.isBoxedResult) {
             bundle.typeTranslator.translateTypeFrame(stream.frames[sym.returnTypeFrameIndex], CppTypePosition.TYPE_ARGUMENT)
@@ -1129,7 +1110,7 @@ internal fun CppDeclarationRenderer.renderLeafContinuationIntrinsicFunction(
                 extensionReceiverIsPointer = extRecvPtr,
                 extensionReceiverSimpleName = extRecvSimple,
                 isVoidReturnContext = isVoidReturn,
-                enclosingFunctionReturnType = authoringRetType.removePrefix("[[noreturn]] "),
+                enclosingFunctionReturnType = CppType.parseInternal(authoringRetType).stripNoReturn().render(),
                 unitReturnExprOverride = if (suspendBoxType == null) "nullptr" else null,
                 isSuspendBody = true,
                 suspendBoxType = suspendBoxType,
@@ -1358,7 +1339,8 @@ internal fun CppDeclarationRenderer.renderFunctionBody(
     val (extRecvCls, extRecvPtr, extRecvSimple) = resolveExtensionReceiverContext(sym)
     val fnRetType =
         sym.returnTypeFrameIndex?.let {
-            bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.RETURN).removePrefix("[[noreturn]] ")
+            val rawFnRet = bundle.typeTranslator.translateTypeFrame(stream.frames[it], CppTypePosition.RETURN)
+            CppType.parseInternal(rawFnRet).stripNoReturn().render()
         }
     val emitter =
         CppExprAndStmtEmitter(
@@ -1464,14 +1446,7 @@ internal fun CppDeclarationRenderer.applyStarNamesToRenderedType(
     starNames: List<String>?,
 ): String {
     if (starNames.isNullOrEmpty()) return renderedType
-    var result = renderedType
-    for (starName in starNames) {
-        val match = STAR_STD_ANY_IN_ANGLE_REGEX.find(result) ?: break
-        val anyEnd = match.range.last + 1
-        val anyStart = anyEnd - match.groups[1]!!.value.length
-        result = result.replaceRange(anyStart, anyEnd, starName)
-    }
-    return result
+    return CppType.parseInternal(renderedType).substituteStarProjections(starNames).render()
 }
 
 internal fun CppDeclarationRenderer.countNonVoidPtrStarProjections(frame: PacketFrame): Int {
@@ -1546,34 +1521,7 @@ internal fun CppDeclarationRenderer.rewriteSuspendFunctionSecondArg(
     bareParamTpNames: Set<String>,
 ): String {
     if (bareParamTpNames.isEmpty()) return cppType
-    val token = "SuspendFunction<"
-    val start = cppType.indexOf(token)
-    if (start < 0) return cppType
-    var depth = 1
-    var commaIdx = -1
-    var closeIdx = -1
-    var i = start + token.length
-    while (i < cppType.length) {
-        when (cppType[i]) {
-            '<' -> depth += 1
-            '>' -> {
-                depth -= 1
-                if (depth == 0) {
-                    closeIdx = i
-                    break
-                }
-            }
-            ',' -> if (depth == 1 && commaIdx < 0) commaIdx = i
-        }
-        i += 1
-    }
-    if (commaIdx < 0 || closeIdx < 0) return cppType
-    val secondArg = cppType.substring(commaIdx + 1, closeIdx).trim()
-    if (secondArg !in bareParamTpNames) return cppType
-    includes.addSystem("type_traits")
-    val prefix = cppType.substring(0, commaIdx + 1)
-    val suffix = cppType.substring(closeIdx)
-    return "$prefix std::type_identity_t<$secondArg>$suffix"
+    return CppType.parseInternal(cppType).withNonDeducedSuspendArg(bareParamTpNames, includes).render()
 }
 
 internal fun CppDeclarationRenderer.rewriteContinuationParamType(
@@ -1581,16 +1529,7 @@ internal fun CppDeclarationRenderer.rewriteContinuationParamType(
     callableTpNames: Set<String>,
 ): String {
     if (callableTpNames.isEmpty()) return cppType
-    for (tp in callableTpNames) {
-        if (cppType == "std::shared_ptr<Continuation<$tp>>" ||
-            cppType == "std::shared_ptr<kotlin::coroutines::Continuation<$tp>>" ||
-            cppType == "std::shared_ptr<kotlinx::coroutines::Continuation<$tp>>"
-        ) {
-            includes.addSystem("type_traits")
-            return "std::type_identity_t<$cppType>"
-        }
-    }
-    return cppType
+    return CppType.parseInternal(cppType).withNonDeducedContinuation(callableTpNames, includes).render()
 }
 
 internal fun CppDeclarationRenderer.computeDeductionSensitiveTpSets(
@@ -1648,23 +1587,22 @@ internal fun CppDeclarationRenderer.appendCallableFunctionForwarderIfEligible(
         return
     }
     val tpName = renderedTypeParams[0].name
-    val cleanRet = retType.removePrefix("[[noreturn]] ")
+    val cleanRet = CppType.parseInternal(retType).stripNoReturn().render()
     if (cleanRet != tpName) return
     val lastIdx = sym.valueParams.lastIndex
     val rawParamTypes =
         sym.valueParams.mapIndexed { pIdx, vp ->
-            resolveFunctionParamRawType(
-                sym = sym,
-                pIdx = pIdx,
-                vp = vp,
-                starPlan = starPlan,
-            ).let { p ->
-                if (collapsedVarianceTp != null) {
-                    replaceWholeIdentifier(p, collapsedVarianceTp.first, collapsedVarianceTp.second)
-                } else {
-                    p
-                }
-            }.let { p -> replaceWholeIdentifierOutsideStrings(p, shadowTpRenames) }
+            val resolved =
+                resolveFunctionParamRawType(
+                    sym = sym,
+                    pIdx = pIdx,
+                    vp = vp,
+                    starPlan = starPlan,
+                )
+            renameShadowTps(
+                renameCollapsedVarianceTp(resolved, collapsedVarianceTp),
+                shadowTpRenames,
+            )
         }
     val expectedFnType = "std::function<$tpName()>"
     if (rawParamTypes[lastIdx] != expectedFnType) return
@@ -1690,34 +1628,43 @@ internal fun CppDeclarationRenderer.appendCallableFunctionForwarderIfEligible(
         }
     val fnArg = "std::function<KxsRet()>(std::forward<KxsCallable>(${lastVp.cppName}))"
     val allCallArgs = (priorCallArgs + fnArg).joinToString(", ")
-    out.append('\n')
-    out.append("#ifndef ").append(guardName).append('\n')
-    out.append("#define ").append(guardName).append('\n')
-    out.append(indent).append("template <typename KxsCallable>\n")
-    out
-        .append(indent)
-        .append("    requires (std::is_invocable_v<KxsCallable&> && ")
-        .append("!std::is_same_v<std::remove_cvref_t<KxsCallable>, ")
-        .append("std::function<std::invoke_result_t<KxsCallable&>()>>)\n")
-    out
-        .append(indent)
-        .append("inline std::invoke_result_t<KxsCallable&> ")
-        .append(methodName)
-        .append('(')
-        .append(fwdParams)
-        .append(") {\n")
-    out
-        .append(indent)
-        .append("    using KxsRet = std::invoke_result_t<KxsCallable&>;\n")
-    out
-        .append(indent)
-        .append("    return ")
-        .append(methodName)
-        .append("<KxsRet>(")
-        .append(allCallArgs)
-        .append(");\n")
-    out.append(indent).append("}\n")
-    out.append("#endif\n")
+    val reqExpr =
+        "std::is_invocable_v<KxsCallable&> && " +
+            "!std::is_same_v<std::remove_cvref_t<KxsCallable>, " +
+            "std::function<std::invoke_result_t<KxsCallable&>()>>"
+    out.append(
+        buildCppTokens(baseIndent = indent) {
+            newline()
+            emitIncludeGuard(guardName) {
+                emitTemplateDeclaration(listOf("typename KxsCallable"), requiresClause = reqExpr)
+                keyword("inline")
+                space()
+                emitRawCode("std::invoke_result_t<KxsCallable&>")
+                space()
+                ident(methodName)
+                punct("(")
+                emitRawCode(fwdParams)
+                punct(")", jointToNext = false)
+                space()
+                punct("{", jointToNext = false)
+                newline()
+                indented {
+                    emitRawCode("using KxsRet = std::invoke_result_t<KxsCallable&>;")
+                    newline()
+                    keyword("return")
+                    space()
+                    ident(methodName)
+                    angles { ident("KxsRet") }
+                    punct("(")
+                    emitRawCode(allCallArgs)
+                    punct(");", jointToNext = false)
+                    newline()
+                }
+                punct("}", jointToNext = false)
+                newline()
+            }
+        },
+    )
 }
 
 internal fun CppDeclarationRenderer.buildFunctionParameterList(
@@ -1775,13 +1722,7 @@ internal fun CppDeclarationRenderer.buildFunctionParameterList(
         val defaultSuffix =
             if (includeDefaults && pIdx >= firstTrailingDefaultIdx && vp.defaultExprFrameIndex != null) {
                 val rawDef = emitter.emitExpression(stream.frames[vp.defaultExprFrameIndex])
-                val coercedDef =
-                    if (rawDef == "nullptr" && paramT.startsWith("std::optional<")) {
-                        includes.addSystem("optional")
-                        "std::nullopt"
-                    } else {
-                        rawDef
-                    }
+                val coercedDef = CppType.parseInternal(paramT).coerceNullDefaultExpr(rawDef, includes)
                 " = $coercedDef"
             } else {
                 ""
@@ -1873,13 +1814,6 @@ internal fun CppDeclarationRenderer.renderPrefixDefaultOverloads(
     scopeSeenNormalizedSigs.add(primaryKey)
     val seenNormalizedSigs = HashSet<String>(scopeSeenNormalizedSigs)
 
-    val authoringAnn =
-        if (hasBoxedResult) {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]"
-        } else {
-            "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"
-        }
-
     return buildString {
         for (keepPrefixCount in startDefaultInclusive until endDefaultExclusive) {
             val sigParts = ArrayList<String>()
@@ -1911,7 +1845,7 @@ internal fun CppDeclarationRenderer.renderPrefixDefaultOverloads(
                 if (pIdx in keepPrefixCount until endDefaultExclusive) {
                     val defFrame = stream.frames[vp.defaultExprFrameIndex!!]
                     val rawDef = emitter.emitExpression(defFrame)
-                    callArgs.add(if (rawDef == "nullptr" && rawT.startsWith("std::optional<")) "std::nullopt" else rawDef)
+                    callArgs.add(CppType.parseInternal(rawT).coerceNullDefaultExpr(rawDef, includes))
                 } else {
                     val paramT =
                         rawParamTypes[pIdx]
@@ -1920,13 +1854,7 @@ internal fun CppDeclarationRenderer.renderPrefixDefaultOverloads(
                     val defSuffix =
                         if (pIdx >= firstTrailingDefaultIdx && vp.defaultExprFrameIndex != null) {
                             val rawDef = emitter.emitExpression(stream.frames[vp.defaultExprFrameIndex])
-                            val coercedDef =
-                                if (rawDef == "nullptr" && paramT.startsWith("std::optional<")) {
-                                    includes.addSystem("optional")
-                                    "std::nullopt"
-                                } else {
-                                    rawDef
-                                }
+                            val coercedDef = CppType.parseInternal(paramT).coerceNullDefaultExpr(rawDef, includes)
                             " = $coercedDef"
                         } else {
                             ""
@@ -1936,7 +1864,8 @@ internal fun CppDeclarationRenderer.renderPrefixDefaultOverloads(
                     loweredSigParts.add("$paramT ${vp.cppName}")
                     normTypes.add(paramT)
                     includes.addSystem("utility")
-                    val fwdArg = if (paramT.endsWith("&") || paramT in VALUE_PASS_CPP_TYPES) vp.cppName else "std::move(${vp.cppName})"
+                    val fwdArg =
+                        if (paramT.endsWith("&") || paramT in VALUE_PASS_CPP_TYPES) vp.cppName else "std::move(${vp.cppName})"
                     callArgs.add(fwdArg)
                     emitter.bindValueParam(vp)
                 }
@@ -1945,80 +1874,25 @@ internal fun CppDeclarationRenderer.renderPrefixDefaultOverloads(
             if (!seenNormalizedSigs.add(normSig)) continue
             scopeSeenNormalizedSigs.add(normSig)
 
-            val isNoreturn = retType.startsWith("[[noreturn]] ")
-            val cleanRetType = retType.removePrefix("[[noreturn]] ")
-            val tArgs = if (effectiveTypeParams.isNotEmpty()) "<${effectiveTypeParams.joinToString(", ") { it.name }}>" else ""
-            if (isDualAbiSuspend) {
-                includes.addSystem("memory")
-                includes.addSystem("utility")
-                includes.addProject("kotlinx/coroutines/Continuation.hpp")
-                val cleanAuthRet = suspendAuthoringRetType.removePrefix("[[noreturn]] ")
-                append('\n')
-                append(renderTemplatePrefix(effectiveTypeParams, indent))
-                append(indent).append(authoringAnn).append('\n')
-                append(indent)
-                if (isNoreturn) append("[[noreturn]] ")
-                if (isStaticOnObject) append("static ")
-                append(cleanAuthRet)
-                    .append(' ')
-                    .append(methodName)
-                    .append('(')
-                    .append(authoringSigParts.joinToString(", "))
-                    .append(')')
-                if (isConstMethod) append(" const")
-                append(";\n")
-
-                val loweredParams =
-                    (loweredSigParts + "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion")
-                        .joinToString(", ")
-                val loweredCallArgs = (callArgs + "std::move(_kxs_completion)").joinToString(", ")
-                append('\n')
-                append(renderTemplatePrefix(effectiveTypeParams, indent))
-                append(indent).append("[[clang::annotate(\"suspend\")]]\n")
-                append(indent)
-                if (isStaticOnObject) {
-                    append("static ")
-                } else if (enclosingClass == null && effectiveTypeParams.isEmpty()) {
-                    append("inline ")
-                }
-                append("void* ")
-                    .append(methodName)
-                    .append('(')
-                    .append(loweredParams)
-                    .append(')')
-                if (isConstMethod) append(" const")
-                append(" { return ")
-                    .append(methodName)
-                    .append(tArgs)
-                    .append('(')
-                    .append(loweredCallArgs)
-                    .append("); }\n")
-            } else {
-                append('\n')
-                append(renderTemplatePrefix(effectiveTypeParams, indent))
-                append(indent)
-                if (isNoreturn) append("[[noreturn]] ")
-                if (isStaticOnObject) {
-                    append("static ")
-                } else if (enclosingClass == null && effectiveTypeParams.isEmpty()) {
-                    append("inline ")
-                }
-                val retPrefix = if (isVoidReturn) "" else "return "
-                append(cleanRetType)
-                    .append(' ')
-                    .append(methodName)
-                    .append('(')
-                    .append(sigParts.joinToString(", "))
-                    .append(')')
-                if (isConstMethod) append(" const")
-                append(" { ")
-                    .append(retPrefix)
-                    .append(methodName)
-                    .append(tArgs)
-                    .append('(')
-                    .append(callArgs.joinToString(", "))
-                    .append("); }\n")
-            }
+            append(
+                renderForwardingOverloadPair(
+                    enclosingClass = enclosingClass,
+                    effectiveTypeParams = effectiveTypeParams,
+                    retType = retType,
+                    isVoidReturn = isVoidReturn,
+                    methodName = methodName,
+                    isConstMethod = isConstMethod,
+                    isStaticOnObject = isStaticOnObject,
+                    isDualAbiSuspend = isDualAbiSuspend,
+                    suspendAuthoringRetType = suspendAuthoringRetType,
+                    hasBoxedResult = hasBoxedResult,
+                    indent = indent,
+                    sigParts = sigParts,
+                    authoringSigParts = authoringSigParts,
+                    loweredSigParts = loweredSigParts,
+                    callArgs = callArgs,
+                ),
+            )
         }
     }
 }
@@ -2053,7 +1927,11 @@ internal fun CppDeclarationRenderer.renderVarargInitializerListOverload(
     val callArgs = ArrayList<String>(sym.valueParams.size + 1)
 
     if (sym.receiverTypeFrameIndex != null) {
-        val rawRType = bundle.typeTranslator.translateTypeFrame(stream.frames[sym.receiverTypeFrameIndex], CppTypePosition.EXTENSION_RECEIVER)
+        val rawRType =
+            bundle.typeTranslator.translateTypeFrame(
+                stream.frames[sym.receiverTypeFrameIndex],
+                CppTypePosition.EXTENSION_RECEIVER,
+            )
         val rType = applyStarNamesToRenderedType(rawRType, starPlan?.receiverStarNames)
         val passType =
             if (rType in VALUE_PASS_CPP_TYPES || rType.endsWith("&") || rType.endsWith("*")) {
@@ -2092,86 +1970,177 @@ internal fun CppDeclarationRenderer.renderVarargInitializerListOverload(
         }
     }
 
-    val isNoreturn = retType.startsWith("[[noreturn]] ")
-    val cleanRetType = retType.removePrefix("[[noreturn]] ")
-    val tArgs = if (effectiveTypeParams.isNotEmpty()) "<${effectiveTypeParams.joinToString(", ") { it.name }}>" else ""
+    return renderForwardingOverloadPair(
+        enclosingClass = enclosingClass,
+        effectiveTypeParams = effectiveTypeParams,
+        retType = retType,
+        isVoidReturn = isVoidReturn,
+        methodName = methodName,
+        isConstMethod = isConstMethod,
+        isStaticOnObject = isStaticOnObject,
+        isDualAbiSuspend = isDualAbiSuspend,
+        suspendAuthoringRetType = suspendAuthoringRetType,
+        hasBoxedResult = hasBoxedResult,
+        indent = indent,
+        sigParts = sigParts,
+        authoringSigParts = authoringSigParts,
+        loweredSigParts = authoringSigParts,
+        callArgs = callArgs,
+    )
+}
 
-    return buildString {
+private fun CppDeclarationRenderer.renderForwardingOverloadPair(
+    enclosingClass: KtClassSymbol?,
+    effectiveTypeParams: List<KtTypeParamInfo>,
+    retType: String,
+    isVoidReturn: Boolean,
+    methodName: String,
+    isConstMethod: Boolean,
+    isStaticOnObject: Boolean,
+    isDualAbiSuspend: Boolean,
+    suspendAuthoringRetType: String,
+    hasBoxedResult: Boolean,
+    indent: String,
+    sigParts: List<String>,
+    authoringSigParts: List<String>,
+    loweredSigParts: List<String>,
+    callArgs: List<String>,
+): String {
+    val parsedRet = CppType.parseInternal(retType)
+    val isNoreturn = parsedRet.isNoReturn
+    val cleanRetType = parsedRet.stripNoReturn().render()
+    val tpClauses = effectiveTypeParams.map { "typename ${it.name}" }
+    val tArgs = if (effectiveTypeParams.isNotEmpty()) "<${effectiveTypeParams.joinToString(", ") { it.name }}>" else ""
+    val isInlineHere = !isStaticOnObject && enclosingClass == null && effectiveTypeParams.isEmpty()
+
+    return buildCppTokens(baseIndent = indent) {
         if (isDualAbiSuspend) {
             includes.addSystem("memory")
+            includes.addSystem("utility")
             includes.addProject("kotlinx/coroutines/Continuation.hpp")
-            val authoringAnn =
-                if (hasBoxedResult) {
-                    "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), clang::annotate(\"kxs_boxed_result\")]]"
-                } else {
-                    "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"
-                }
-            val cleanAuthRet = suspendAuthoringRetType.removePrefix("[[noreturn]] ")
-            append('\n')
-            append(renderTemplatePrefix(effectiveTypeParams, indent))
-            append(indent).append(authoringAnn).append('\n')
-            append(indent)
-            if (isNoreturn) append("[[noreturn]] ")
-            if (isStaticOnObject) append("static ")
-            append(cleanAuthRet)
-                .append(' ')
-                .append(methodName)
-                .append('(')
-                .append(authoringSigParts.joinToString(", "))
-                .append(')')
-            if (isConstMethod) append(" const")
-            append(";\n")
+            val cleanAuthRet = CppType.parseInternal(suspendAuthoringRetType).stripNoReturn().render()
+            newline()
+            emitTemplateDeclaration(tpClauses)
+            emitSuspendAnnotations(implicitContinuation = true, boxedResult = hasBoxedResult)
+            newline()
+            if (isNoreturn) {
+                emitStandardAttribute("noreturn")
+                space()
+            }
+            if (isStaticOnObject) {
+                keyword("static")
+                space()
+            }
+            emitRawCode(cleanAuthRet)
+            space()
+            ident(methodName)
+            punct("(")
+            if (authoringSigParts.isNotEmpty()) emitRawCode(authoringSigParts.joinToString(", "))
+            punct(")", jointToNext = false)
+            if (isConstMethod) {
+                space()
+                keyword("const")
+            }
+            punct(";", jointToNext = false)
+            newline()
 
             val loweredParams =
-                (authoringSigParts + "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion")
+                (loweredSigParts + "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion")
                     .joinToString(", ")
             val loweredCallArgs = (callArgs + "std::move(_kxs_completion)").joinToString(", ")
-            append('\n')
-            append(renderTemplatePrefix(effectiveTypeParams, indent))
-            append(indent).append("[[clang::annotate(\"suspend\")]]\n")
-            append(indent)
+            newline()
+            emitTemplateDeclaration(tpClauses)
+            emitSuspendAnnotations(implicitContinuation = false, boxedResult = false)
+            newline()
             if (isStaticOnObject) {
-                append("static ")
-            } else if (enclosingClass == null && effectiveTypeParams.isEmpty()) {
-                append("inline ")
+                keyword("static")
+                space()
+            } else if (isInlineHere) {
+                keyword("inline")
+                space()
             }
-            append("void* ")
-                .append(methodName)
-                .append('(')
-                .append(loweredParams)
-                .append(')')
-            if (isConstMethod) append(" const")
-            append(" { return ")
-                .append(methodName)
-                .append(tArgs)
-                .append('(')
-                .append(loweredCallArgs)
-                .append("); }\n")
+            keyword("void")
+            punct("*", jointToNext = false)
+            space()
+            ident(methodName)
+            punct("(")
+            emitRawCode(loweredParams)
+            punct(")", jointToNext = false)
+            if (isConstMethod) {
+                space()
+                keyword("const")
+            }
+            space()
+            punct("{", jointToNext = false)
+            space()
+            keyword("return")
+            space()
+            ident(methodName)
+            if (tArgs.isNotEmpty()) emitRawCode(tArgs)
+            punct("(")
+            emitRawCode(loweredCallArgs)
+            punct("); }", jointToNext = false)
+            newline()
         } else {
-            append('\n')
-            append(renderTemplatePrefix(effectiveTypeParams, indent))
-            append(indent)
-            if (isNoreturn) append("[[noreturn]] ")
-            if (isStaticOnObject) {
-                append("static ")
-            } else if (enclosingClass == null && effectiveTypeParams.isEmpty()) {
-                append("inline ")
+            newline()
+            emitTemplateDeclaration(tpClauses)
+            if (isNoreturn) {
+                emitStandardAttribute("noreturn")
+                space()
             }
-            val retPrefix = if (isVoidReturn) "" else "return "
-            append(cleanRetType)
-                .append(' ')
-                .append(methodName)
-                .append('(')
-                .append(sigParts.joinToString(", "))
-                .append(')')
-            if (isConstMethod) append(" const")
-            append(" { ")
-                .append(retPrefix)
-                .append(methodName)
-                .append(tArgs)
-                .append('(')
-                .append(callArgs.joinToString(", "))
-                .append("); }\n")
+            if (isStaticOnObject) {
+                keyword("static")
+                space()
+            } else if (isInlineHere) {
+                keyword("inline")
+                space()
+            }
+            emitRawCode(cleanRetType)
+            space()
+            ident(methodName)
+            punct("(")
+            if (sigParts.isNotEmpty()) emitRawCode(sigParts.joinToString(", "))
+            punct(")", jointToNext = false)
+            if (isConstMethod) {
+                space()
+                keyword("const")
+            }
+            space()
+            punct("{", jointToNext = false)
+            space()
+            if (!isVoidReturn) {
+                keyword("return")
+                space()
+            }
+            ident(methodName)
+            if (tArgs.isNotEmpty()) emitRawCode(tArgs)
+            punct("(")
+            if (callArgs.isNotEmpty()) emitRawCode(callArgs.joinToString(", "))
+            punct("); }", jointToNext = false)
+            newline()
         }
     }
 }
+
+private fun renameShadowTps(
+    code: String,
+    renames: Map<String, String>,
+): String = CppTokenStream.tokenizeCppCode(code).renameIdents(renames, skipMemberAccessRhs = true).render()
+
+private fun renameCollapsedVarianceTp(
+    code: String,
+    tpPair: Pair<String, String>?,
+): String =
+    if (tpPair == null) {
+        code
+    } else {
+        CppTokenStream
+            .tokenizeCppCode(code)
+            .renameIdents(mapOf(tpPair.first to tpPair.second), skipMemberAccessRhs = false)
+            .render()
+    }
+
+private fun renderSuspendAnn(
+    implicitContinuation: Boolean,
+    boxedResult: Boolean,
+): String = buildCppTokens { emitSuspendAnnotations(implicitContinuation, boxedResult) }

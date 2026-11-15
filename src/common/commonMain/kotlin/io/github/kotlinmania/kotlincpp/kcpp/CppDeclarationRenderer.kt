@@ -463,8 +463,9 @@ internal class CppDeclarationRenderer(
                         inferFunctionExpressionBodyReturnType(fn, null, stream.frames[fn.bodyFrameIndex])
                     else -> "void"
                 }
-            val isNoreturn = rawRetType.startsWith("[[noreturn]] ")
-            val retType = rawRetType.removePrefix("[[noreturn]] ")
+            val parsedRet = CppType.parseInternal(rawRetType)
+            val isNoreturn = parsedRet.isNoReturn
+            val retType = parsedRet.stripNoReturn().render()
             if (retType == "auto") continue
             if (frameMentionsUndeclaredLocalClass(fn.returnTypeFrameIndex) ||
                 frameMentionsUndeclaredLocalClass(fn.receiverTypeFrameIndex) ||
@@ -530,15 +531,17 @@ internal class CppDeclarationRenderer(
         defaultedVoidPtrNames: Set<String> = emptySet(),
     ): String {
         if (typeParams.isEmpty()) return ""
-        val rendered =
-            typeParams.joinToString(", ") { tp ->
+        val clauses =
+            typeParams.map { tp ->
                 if (tp.name in defaultedVoidPtrNames) {
                     "typename ${tp.name} = void*"
                 } else {
                     "typename ${tp.name}"
                 }
             }
-        return "$indent" + "template <$rendered>\n"
+        return buildCppTokens(baseIndent = indent) {
+            emitTemplateDeclaration(clauses)
+        }
     }
 
     internal fun renderTypeAlias(
@@ -626,8 +629,9 @@ internal class CppDeclarationRenderer(
                     ?: sym.initializerFrameIndex?.let {
                         inferExpressionBodyReturnType(stream.frames[it], enclosingClass, propRecvForInfer)
                     } ?: "auto"
-            val isNoreturn = rawRetType.startsWith("[[noreturn]] ")
-            val retType = rawRetType.removePrefix("[[noreturn]] ")
+            val parsedRet = CppType.parseInternal(rawRetType)
+            val isNoreturn = parsedRet.isNoReturn
+            val retType = parsedRet.stripNoReturn().render()
             val setValType =
                 sym.returnTypeFrameIndex?.let {
                     bundle.typeTranslator.translateTypeFrame(
@@ -767,11 +771,14 @@ internal class CppDeclarationRenderer(
                         val rawInit =
                             sym.initializerFrameIndex?.let { initEmitter.emitExpression(stream.frames[it]) }
                         val coercedInit =
-                            when {
-                                rawInit == null -> "{}"
-                                rawInit == "nullptr" && backingCppType.startsWith("std::optional<") -> "std::nullopt"
-                                rawInit == "nullptr" && backingCppType == "std::any" -> "{}"
-                                else -> rawInit
+                            if (rawInit == null) {
+                                "{}"
+                            } else {
+                                CppType.parseInternal(backingCppType).coerceNullDefaultExpr(
+                                    rawInit,
+                                    includes,
+                                    coerceStdAnyToBraces = true,
+                                )
                             }
                         append(indent)
                             .append(fieldStoragePrefix)
@@ -1335,11 +1342,11 @@ internal class CppDeclarationRenderer(
                         )
                 if (initCode != null) {
                     val coercedInit =
-                        when {
-                            initCode == "nullptr" && cppT.startsWith("std::optional<") -> "std::nullopt"
-                            initCode == "nullptr" && cppT == "std::any" -> "{}"
-                            else -> initCode
-                        }
+                        CppType.parseInternal(cppT).coerceNullDefaultExpr(
+                            initCode,
+                            includes,
+                            coerceStdAnyToBraces = true,
+                        )
                     if (outOfLineStaticQual != null && (deferStaticToPost || deferStaticToBottom)) {
                         append(indent)
                             .append("static ")
@@ -1454,11 +1461,11 @@ internal class CppDeclarationRenderer(
                             referencesNonFieldCtorParam(enclosingClass, stream.frames[sym.initializerFrameIndex])
                     if (initCode != null && !initMentionsCtorParam) {
                         val coercedInit =
-                            when {
-                                initCode == "nullptr" && cppT.startsWith("std::optional<") -> "std::nullopt"
-                                initCode == "nullptr" && cppT == "std::any" -> "{}"
-                                else -> initCode
-                            }
+                            CppType.parseInternal(cppT).coerceNullDefaultExpr(
+                                initCode,
+                                includes,
+                                coerceStdAnyToBraces = true,
+                            )
                         append(indent)
                             .append(qualKw)
                             .append(cppT)
@@ -1481,9 +1488,6 @@ internal class CppDeclarationRenderer(
     }
 
     companion object {
-        internal val STAR_STD_ANY_IN_ANGLE_REGEX: Regex =
-            Regex("""(?:<|,\s*)(std::any|void\*)(?=\s*[,>])""")
-
         internal val BOOL_BINARY_OPERATOR_IDS: Set<Int> =
             setOf(
                 KtTokens.EQEQ_ID,

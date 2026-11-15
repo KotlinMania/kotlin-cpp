@@ -893,10 +893,11 @@ internal class CppExprAndStmtEmitter(
                 return "kxs_box_suspend_result<$boxT>(kotlin::Unit{})"
             }
             if (trimmed == "nullptr" || trimmed == "std::nullopt" || trimmed == "{}") {
-                return if (boxT.startsWith("std::optional<") ||
-                    boxT == "std::any" ||
-                    boxT.startsWith("std::shared_ptr<") ||
-                    boxT.endsWith("*")
+                val parsedBoxT = CppType.parseInternal(boxT)
+                return if (parsedBoxT.isOptional ||
+                    parsedBoxT.isStdAny ||
+                    parsedBoxT.isSharedPtr ||
+                    parsedBoxT.isRawPtr
                 ) {
                     "kxs_box_suspend_result<$boxT>($boxT{})"
                 } else {
