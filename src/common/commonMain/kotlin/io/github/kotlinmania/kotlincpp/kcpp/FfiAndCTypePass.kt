@@ -29,6 +29,10 @@ internal enum class CInteropOpKind {
     ADDRESS_OF,
     ALLOC_SCALAR,
     ALLOC_ARRAY,
+    INTERPRET_CPOINTER,
+    RAW_VALUE,
+    CONVERT,
+    NATIVE_PTR_NULL,
 }
 
 internal data class CInteropExprSite(
@@ -202,6 +206,18 @@ internal object FfiAndCTypePass {
                             argExprFrameIndex = firstArg?.frameIndex,
                         )
                 }
+                if (callee == "interpretCPointer") {
+                    val targetType = extractFirstTypeArg(stream, frame)
+                    val firstArg = extractFirstValueArgExpr(stream, frame)
+                    cInteropOps[frame.frameIndex] =
+                        CInteropExprSite(
+                            exprFrameIndex = frame.frameIndex,
+                            kind = CInteropOpKind.INTERPRET_CPOINTER,
+                            receiverExprFrameIndex = null,
+                            targetTypeFrameIndex = targetType?.frameIndex,
+                            argExprFrameIndex = firstArg?.frameIndex,
+                        )
+                }
             }
 
             KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID -> {
@@ -284,6 +300,16 @@ internal object FfiAndCTypePass {
                                         argExprFrameIndex = null,
                                     )
                             }
+                            "convert" -> {
+                                cInteropOps[frame.frameIndex] =
+                                    CInteropExprSite(
+                                        exprFrameIndex = frame.frameIndex,
+                                        kind = CInteropOpKind.CONVERT,
+                                        receiverExprFrameIndex = recv.frameIndex,
+                                        targetTypeFrameIndex = extractFirstTypeArg(stream, sel)?.frameIndex,
+                                        argExprFrameIndex = null,
+                                    )
+                            }
                             "addressOf" -> {
                                 val recvName =
                                     if (recv.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
@@ -325,14 +351,26 @@ internal object FfiAndCTypePass {
                         }
                     } else if (sel.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
                         val prop = FrameAstHelpers.directIdentPacket(stream, sel)?.unescapedName
-                        when (prop) {
-                            "pointed" ->
+                        val recvIdent =
+                            if (recv.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID) {
+                                FrameAstHelpers.directIdentPacket(stream, recv)?.unescapedName
+                            } else {
+                                null
+                            }
+                        when {
+                            recvIdent == "NativePtr" && prop == "NULL" ->
+                                cInteropOps[frame.frameIndex] =
+                                    CInteropExprSite(frame.frameIndex, CInteropOpKind.NATIVE_PTR_NULL, null, null, null)
+                            prop == "rawValue" ->
+                                cInteropOps[frame.frameIndex] =
+                                    CInteropExprSite(frame.frameIndex, CInteropOpKind.RAW_VALUE, recv.frameIndex, null, null)
+                            prop == "pointed" ->
                                 cInteropOps[frame.frameIndex] =
                                     CInteropExprSite(frame.frameIndex, CInteropOpKind.POINTED, recv.frameIndex, null, null)
-                            "ptr" ->
+                            prop == "ptr" ->
                                 cInteropOps[frame.frameIndex] =
                                     CInteropExprSite(frame.frameIndex, CInteropOpKind.PTR, recv.frameIndex, null, null)
-                            "cstr" ->
+                            prop == "cstr" ->
                                 cInteropOps[frame.frameIndex] =
                                     CInteropExprSite(frame.frameIndex, CInteropOpKind.CSTR, recv.frameIndex, null, null)
                         }

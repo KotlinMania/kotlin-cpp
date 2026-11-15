@@ -59,10 +59,31 @@ internal object ControlFlowAndTypePass {
         for (fn in symbols.functionsByFrame.values) {
             val bodyIdx = fn.bodyFrameIndex ?: continue
             val bodyFrame = stream.frames[bodyIdx]
+            val fnNothingNames = LinkedHashSet<String>(nothingFunNames)
+            for (vp in fn.valueParams) {
+                val tfIdx = vp.typeFrameIndex ?: continue
+                val tf = stream.frames[tfIdx]
+                val fnTypeFrame =
+                    if (tf.nodeTypeId == KtNodeTypes.FUNCTION_TYPE_ID) {
+                        tf
+                    } else {
+                        FrameAstHelpers.firstChildFrame(stream, tf, KtNodeTypes.FUNCTION_TYPE_ID)
+                    }
+                val retTr =
+                    fnTypeFrame?.let {
+                        FrameAstHelpers.childFramesOfType(stream, it, KtNodeTypes.TYPE_REFERENCE_ID).lastOrNull()
+                    }
+                if (retTr != null &&
+                    FrameAstHelpers.extractPrimaryTypeSimpleName(stream, retTr) == "Nothing" &&
+                    !FrameAstHelpers.isNullableTypeFrame(stream, retTr)
+                ) {
+                    fnNothingNames.add(vp.name)
+                }
+            }
             val ctx =
                 CfWalkContext(
                     stream = stream,
-                    nothingFunNames = nothingFunNames,
+                    nothingFunNames = fnNothingNames,
                     hoistedByExpr = hoistedByExpr,
                     hoistedBeforeStmt = hoistedBeforeStmt,
                     singleEvalTemps = singleEvalTemps,
@@ -79,7 +100,13 @@ internal object ControlFlowAndTypePass {
         }
 
         for (prop in symbols.propertiesByFrame.values) {
-            prop.initializerFrameIndex?.let { idx ->
+            val entries =
+                listOfNotNull(
+                    prop.initializerFrameIndex?.let { it to true },
+                    prop.getterFrameIndex?.let { it to true },
+                    prop.setterFrameIndex?.let { it to false },
+                )
+            for ((idx, isValuePos) in entries) {
                 val ctx =
                     CfWalkContext(
                         stream = stream,
@@ -91,7 +118,7 @@ internal object ControlFlowAndTypePass {
                         nextCfIndex = { cfCounter++ },
                         nextTempIndex = { tempCounter++ },
                     )
-                walkFrame(stream.frames[idx], inValuePosition = true, enclosingStmtFrameIndex = idx, ctx = ctx)
+                walkFrame(stream.frames[idx], inValuePosition = isValuePos, enclosingStmtFrameIndex = idx, ctx = ctx)
             }
         }
 
@@ -154,9 +181,10 @@ internal object ControlFlowAndTypePass {
             KtNodeTypes.IF_ID -> {
                 if (inValuePosition) {
                     frame.flags = frame.flags or PacketFlags.EXPRESSION_VALUE_POSITION
-                    if (PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) &&
-                        enclosingStmtFrameIndex != frame.frameIndex
-                    ) {
+                    val needsHoist =
+                        PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) ||
+                            FrameAstHelpers.subtreeHasUnhandledControlJump(stream, frame)
+                    if (needsHoist && enclosingStmtFrameIndex != frame.frameIndex) {
                         registerHoistedControlFlow(frame, enclosingStmtFrameIndex, ctx)
                     }
                 }
@@ -183,9 +211,10 @@ internal object ControlFlowAndTypePass {
             KtNodeTypes.WHEN_ID -> {
                 if (inValuePosition) {
                     frame.flags = frame.flags or PacketFlags.EXPRESSION_VALUE_POSITION
-                    if (PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) &&
-                        enclosingStmtFrameIndex != frame.frameIndex
-                    ) {
+                    val needsHoist =
+                        PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) ||
+                            FrameAstHelpers.subtreeHasUnhandledControlJump(stream, frame)
+                    if (needsHoist && enclosingStmtFrameIndex != frame.frameIndex) {
                         registerHoistedControlFlow(frame, enclosingStmtFrameIndex, ctx)
                     }
                 }
@@ -210,6 +239,13 @@ internal object ControlFlowAndTypePass {
                 }
 
                 for (entry in FrameAstHelpers.childFramesOfType(stream, frame, KtNodeTypes.WHEN_ENTRY_ID)) {
+                    val entryCondCount =
+                        FrameAstHelpers.childFrames(stream, entry).count { child ->
+                            child.nodeTypeId == KtNodeTypes.WHEN_CONDITION_IS_PATTERN_ID ||
+                                child.nodeTypeId == KtNodeTypes.WHEN_CONDITION_IN_RANGE_ID ||
+                                child.nodeTypeId == KtNodeTypes.WHEN_CONDITION_EXPRESSION_ID
+                        }
+                    if (entryCondCount != 1) continue
                     for (isPat in FrameAstHelpers.childFramesOfType(stream, entry, KtNodeTypes.WHEN_CONDITION_IS_PATTERN_ID)) {
                         val tr = FrameAstHelpers.firstChildFrame(stream, isPat, KtNodeTypes.TYPE_REFERENCE_ID)
                         val negated = FrameAstHelpers.hasDirectKeyword(stream, isPat, KtTokens.NOT_IS_ID)
@@ -226,6 +262,20 @@ internal object ControlFlowAndTypePass {
                                         isNegated = false,
                                     ),
                                 )
+                        }
+                    }
+                    if (subjectVarName == null) {
+                        val condWrap =
+                            FrameAstHelpers.firstChildFrame(stream, entry, KtNodeTypes.WHEN_CONDITION_EXPRESSION_ID)
+                        val innerCond = condWrap?.let { FrameAstHelpers.childFrames(stream, it).firstOrNull() }
+                        if (innerCond != null) {
+                            for (sc in extractConditionSmartCasts(stream, innerCond, whenTrue = true)) {
+                                if (!sc.isNegated) {
+                                    ctx.smartCasts
+                                        .getOrPut(entry.frameIndex) { ArrayList() }
+                                        .add(sc.copy(scopeFrameIndex = entry.frameIndex))
+                                }
+                            }
                         }
                     }
                     val children = FrameAstHelpers.childFrames(stream, entry)
@@ -246,9 +296,10 @@ internal object ControlFlowAndTypePass {
             KtNodeTypes.TRY_ID -> {
                 if (inValuePosition) {
                     frame.flags = frame.flags or PacketFlags.EXPRESSION_VALUE_POSITION
-                    if (PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) &&
-                        enclosingStmtFrameIndex != frame.frameIndex
-                    ) {
+                    val needsHoist =
+                        PacketFlags.hasFlag(frame.flags, PacketFlags.HAS_SUSPEND_IN_SUBTREE) ||
+                            FrameAstHelpers.subtreeHasUnhandledControlJump(stream, frame)
+                    if (needsHoist && enclosingStmtFrameIndex != frame.frameIndex) {
                         registerHoistedControlFlow(frame, enclosingStmtFrameIndex, ctx)
                     }
                 }
@@ -347,6 +398,25 @@ internal object ControlFlowAndTypePass {
                 }
             }
 
+            KtNodeTypes.PROPERTY_ACCESSOR_ID -> {
+                val body =
+                    FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.BLOCK_ID)
+                        ?: FrameAstHelpers.childFrames(stream, frame).lastOrNull {
+                            it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID &&
+                                it.nodeTypeId != KtNodeTypes.VALUE_PARAMETER_LIST_ID &&
+                                it.nodeTypeId != KtNodeTypes.TYPE_REFERENCE_ID
+                        }
+                if (body != null) {
+                    walkFrame(
+                        frame = body,
+                        inValuePosition = inValuePosition,
+                        enclosingStmtFrameIndex = body.frameIndex,
+                        ctx = ctx,
+                    )
+                }
+                return
+            }
+
             else -> Unit
         }
 
@@ -382,21 +452,42 @@ internal object ControlFlowAndTypePass {
         ctx.hoistedBeforeStmt.getOrPut(enclosingStmtFrameIndex) { ArrayList() }.add(entry)
     }
 
-    private fun detectIfConditionSmartCasts(
+    internal fun extractConditionSmartCasts(
         stream: PacketStream,
-        condWrap: PacketFrame,
-        thenWrap: PacketFrame?,
-        elseWrap: PacketFrame?,
-        ctx: CfWalkContext,
+        expr: PacketFrame,
+        whenTrue: Boolean,
+    ): List<SmartCastBinding> {
+        val out = ArrayList<SmartCastBinding>()
+        collectConditionSmartCasts(stream, expr, whenTrue, out)
+        return out
+    }
+
+    private fun unwrapConditionExpr(
+        stream: PacketStream,
+        expr: PacketFrame,
+    ): PacketFrame {
+        var cur = expr
+        while (cur.nodeTypeId == KtNodeTypes.PARENTHESIZED_ID) {
+            cur = FrameAstHelpers.childFrames(stream, cur).firstOrNull() ?: break
+        }
+        return cur
+    }
+
+    private fun collectConditionSmartCasts(
+        stream: PacketStream,
+        expr: PacketFrame,
+        whenTrue: Boolean,
+        out: MutableList<SmartCastBinding>,
     ) {
-        val expr = FrameAstHelpers.childFrames(stream, condWrap).firstOrNull() ?: return
-        if (expr.nodeTypeId == KtNodeTypes.IS_EXPRESSION_ID) {
-            val children = FrameAstHelpers.childFrames(stream, expr)
-            val lhs = children.firstOrNull()
-            val tr = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.TYPE_REFERENCE_ID)
-            val opRef = FrameAstHelpers.firstChildFrame(stream, expr, KtNodeTypes.OPERATION_REFERENCE_ID)
-            val isNeg = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.NOT_IS_ID
-            if (lhs != null && tr != null) {
+        val u = unwrapConditionExpr(stream, expr)
+        when (u.nodeTypeId) {
+            KtNodeTypes.IS_EXPRESSION_ID -> {
+                val children = FrameAstHelpers.childFrames(stream, u)
+                val lhs = children.firstOrNull()?.let { unwrapConditionExpr(stream, it) } ?: return
+                val tr = FrameAstHelpers.firstChildFrame(stream, u, KtNodeTypes.TYPE_REFERENCE_ID) ?: return
+                val opRef = FrameAstHelpers.firstChildFrame(stream, u, KtNodeTypes.OPERATION_REFERENCE_ID)
+                val isNeg = opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.NOT_IS_ID
+                if (isNeg == whenTrue) return
                 val varName =
                     when (lhs.nodeTypeId) {
                         KtNodeTypes.REFERENCE_EXPRESSION_ID -> FrameAstHelpers.directIdentPacket(stream, lhs)?.unescapedName
@@ -409,46 +500,130 @@ internal object ControlFlowAndTypePass {
                     } else {
                         "${CppNamingPolicy.toSnakeCase(varName)}_narrowed"
                     }
-                expr.flags = expr.flags or PacketFlags.SMART_CAST_SUBTYPE
-                val targetBranch = if (!isNeg) thenWrap else elseWrap
-                if (targetBranch != null) {
-                    ctx.smartCasts
-                        .getOrPut(targetBranch.frameIndex) { ArrayList() }
-                        .add(
-                            SmartCastBinding(
-                                scopeFrameIndex = targetBranch.frameIndex,
-                                kotlinVarName = varName,
-                                narrowedCppName = narrowedCpp,
-                                targetTypeFrameIndex = tr.frameIndex,
-                                isNegated = false,
-                            ),
-                        )
+                if (out.none { it.kotlinVarName == varName && it.targetTypeFrameIndex == tr.frameIndex }) {
+                    out.add(
+                        SmartCastBinding(
+                            scopeFrameIndex = -1,
+                            kotlinVarName = varName,
+                            narrowedCppName = narrowedCpp,
+                            targetTypeFrameIndex = tr.frameIndex,
+                            isNegated = false,
+                        ),
+                    )
                 }
             }
-        } else if (expr.nodeTypeId == KtNodeTypes.BINARY_EXPRESSION_ID) {
-            val children = FrameAstHelpers.childFrames(stream, expr)
-            if (children.size >= 3) {
+            KtNodeTypes.PREFIX_EXPRESSION_ID -> {
+                val operand = findNegatedOperand(stream, u) ?: return
+                collectConditionSmartCasts(stream, operand, !whenTrue, out)
+            }
+            KtNodeTypes.BINARY_EXPRESSION_ID -> {
+                val children = FrameAstHelpers.childFrames(stream, u)
+                if (children.size < 3) return
                 val opId = FrameAstHelpers.operationTokenId(stream, children[1])
-                val lhsIsNull = children[0].nodeTypeId == KtNodeTypes.NULL_ID
-                val rhsIsNull = children[2].nodeTypeId == KtNodeTypes.NULL_ID
+                val shouldRecurseBoth =
+                    (whenTrue && opId == KtTokens.ANDAND_ID) ||
+                        (!whenTrue && opId == KtTokens.OROR_ID)
+                if (shouldRecurseBoth) {
+                    collectConditionSmartCasts(stream, children[0], whenTrue, out)
+                    collectConditionSmartCasts(stream, children[2], whenTrue, out)
+                }
+            }
+        }
+    }
+
+    private fun findNegatedOperand(
+        stream: PacketStream,
+        prefixFrame: PacketFrame,
+    ): PacketFrame? {
+        val opRef = FrameAstHelpers.firstChildFrame(stream, prefixFrame, KtNodeTypes.OPERATION_REFERENCE_ID)
+        return if (opRef != null && FrameAstHelpers.operationTokenId(stream, opRef) == KtTokens.EXCL_ID) {
+            FrameAstHelpers
+                .childFrames(stream, prefixFrame)
+                .firstOrNull { it.nodeTypeId != KtNodeTypes.OPERATION_REFERENCE_ID }
+        } else {
+            null
+        }
+    }
+
+    private fun markConditionFlags(
+        stream: PacketStream,
+        expr: PacketFrame,
+        whenTrue: Boolean,
+        targetBranch: PacketFrame?,
+    ) {
+        val u = unwrapConditionExpr(stream, expr)
+        when (u.nodeTypeId) {
+            KtNodeTypes.IS_EXPRESSION_ID -> {
+                val children = FrameAstHelpers.childFrames(stream, u)
+                val lhs = children.firstOrNull()?.let { unwrapConditionExpr(stream, it) }
+                val tr = FrameAstHelpers.firstChildFrame(stream, u, KtNodeTypes.TYPE_REFERENCE_ID)
+                if (lhs != null &&
+                    tr != null &&
+                    (
+                        lhs.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID ||
+                            lhs.nodeTypeId == KtNodeTypes.THIS_EXPRESSION_ID
+                    )
+                ) {
+                    u.flags = u.flags or PacketFlags.SMART_CAST_SUBTYPE
+                }
+            }
+            KtNodeTypes.PREFIX_EXPRESSION_ID -> {
+                val operand = findNegatedOperand(stream, u) ?: return
+                markConditionFlags(stream, operand, !whenTrue, targetBranch)
+            }
+            KtNodeTypes.BINARY_EXPRESSION_ID -> {
+                val children = FrameAstHelpers.childFrames(stream, u)
+                if (children.size < 3) return
+                val opId = FrameAstHelpers.operationTokenId(stream, children[1])
+                if ((whenTrue && opId == KtTokens.ANDAND_ID) || (!whenTrue && opId == KtTokens.OROR_ID)) {
+                    markConditionFlags(stream, children[0], whenTrue, targetBranch)
+                    markConditionFlags(stream, children[2], whenTrue, targetBranch)
+                    return
+                }
                 val varSide =
-                    if (rhsIsNull) {
-                        children[0]
-                    } else if (lhsIsNull) {
-                        children[2]
-                    } else {
-                        null
-                    }
+                    when {
+                        children[2].nodeTypeId == KtNodeTypes.NULL_ID -> children[0]
+                        children[0].nodeTypeId == KtNodeTypes.NULL_ID -> children[2]
+                        else -> null
+                    }?.let { unwrapConditionExpr(stream, it) }
                 if (varSide != null &&
                     varSide.nodeTypeId == KtNodeTypes.REFERENCE_EXPRESSION_ID &&
                     (opId == KtTokens.EXCLEQ_ID || opId == KtTokens.EQEQ_ID)
                 ) {
-                    expr.flags = expr.flags or PacketFlags.SMART_CAST_NON_NULL
-                    val targetBranch = if (opId == KtTokens.EXCLEQ_ID) thenWrap else elseWrap
-                    if (targetBranch != null) {
+                    u.flags = u.flags or PacketFlags.SMART_CAST_NON_NULL
+                    val isNonNullWhenTrue = opId == KtTokens.EXCLEQ_ID
+                    if (isNonNullWhenTrue == whenTrue && targetBranch != null) {
                         targetBranch.flags = targetBranch.flags or PacketFlags.SMART_CAST_NON_NULL
                     }
                 }
+            }
+        }
+    }
+
+    private fun detectIfConditionSmartCasts(
+        stream: PacketStream,
+        condWrap: PacketFrame,
+        thenWrap: PacketFrame?,
+        elseWrap: PacketFrame?,
+        ctx: CfWalkContext,
+    ) {
+        val expr = FrameAstHelpers.childFrames(stream, condWrap).firstOrNull() ?: return
+        markConditionFlags(stream, expr, whenTrue = true, targetBranch = thenWrap)
+        markConditionFlags(stream, expr, whenTrue = false, targetBranch = elseWrap)
+        thenWrap?.let { wrap ->
+            val casts = extractConditionSmartCasts(stream, expr, whenTrue = true)
+            if (casts.isNotEmpty()) {
+                ctx.smartCasts
+                    .getOrPut(wrap.frameIndex) { ArrayList() }
+                    .addAll(casts.map { it.copy(scopeFrameIndex = wrap.frameIndex) })
+            }
+        }
+        elseWrap?.let { wrap ->
+            val casts = extractConditionSmartCasts(stream, expr, whenTrue = false)
+            if (casts.isNotEmpty()) {
+                ctx.smartCasts
+                    .getOrPut(wrap.frameIndex) { ArrayList() }
+                    .addAll(casts.map { it.copy(scopeFrameIndex = wrap.frameIndex) })
             }
         }
     }
@@ -464,7 +639,7 @@ internal object ControlFlowAndTypePass {
         )
 
     private val BUILTIN_DIVERGING_CALLS: Set<String> =
-        setOf("error", "TODO")
+        setOf("error", "TODO", "noImpl")
 
     private val RESULT_API_METHODS: Set<String> =
         setOf("runCatching", "getOrThrow", "getOrNull", "getOrDefault", "getOrElse", "exceptionOrNull", "fold")

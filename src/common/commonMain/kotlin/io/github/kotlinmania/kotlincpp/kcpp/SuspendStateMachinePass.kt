@@ -730,9 +730,23 @@ internal object SuspendStateMachinePass {
         }
 
         // Record inline call expansion when a builtin or same-file `inline fun` has a lambda with suspend or non-local return,
-        // or when `synchronized(lock) { ... }` is called directly with an inline lambda.
+        // or when `synchronized(lock) { ... }` or a builtin scope function inside an `inline fun` is called directly.
+        val enclosingFnIsInline =
+            ctx.enclosingFnFrameIndex?.let { fnIdx ->
+                ctx.symbols.functionsByFrame[fnIdx]?.let {
+                    PacketFlags.hasFlag(stream.frames[it.frameIndex].flags, PacketFlags.MOD_INLINE)
+                }
+            } == true
         if (capturedInlineLambdaFrame != null &&
-            (inlineLambdaHasSuspendOrNonLocalReturn || builtinInlineKind == BuiltinInlineKind.SYNCHRONIZED)
+            (
+                inlineLambdaHasSuspendOrNonLocalReturn ||
+                    builtinInlineKind == BuiltinInlineKind.SYNCHRONIZED ||
+                    (enclosingFnIsInline && builtinInlineKind != null) ||
+                    (
+                        outerFrame.nodeTypeId != KtNodeTypes.SAFE_ACCESS_EXPRESSION_ID &&
+                            builtinInlineKind in INLINE_SCOPE_BUILTIN_KINDS
+                    )
+            )
         ) {
             val kind = builtinInlineKind ?: if (sameFileInlineFn != null) BuiltinInlineKind.SAME_FILE_INLINE_FUN else null
             if (kind != null) {
@@ -926,7 +940,11 @@ internal object SuspendStateMachinePass {
             when (bodyFrame.nodeTypeId) {
                 KtNodeTypes.CALL_EXPRESSION_ID -> bodyFrame
                 KtNodeTypes.BLOCK_ID -> {
-                    val children = FrameAstHelpers.childFrames(stream, bodyFrame)
+                    val children =
+                        FrameAstHelpers.childFrames(stream, bodyFrame).filterNot { child ->
+                            child.nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID &&
+                                extractCalleeSimpleName(stream, child) == "contract"
+                        }
                     if (children.size == 1) {
                         val sole = children[0]
                         when (sole.nodeTypeId) {
@@ -1286,6 +1304,14 @@ internal object SuspendStateMachinePass {
             "withLock" to BuiltinInlineKind.WITH_LOCK,
             "synchronized" to BuiltinInlineKind.SYNCHRONIZED,
             "forEach" to BuiltinInlineKind.FOR_EACH,
+        )
+
+    private val INLINE_SCOPE_BUILTIN_KINDS: Set<BuiltinInlineKind> =
+        setOf(
+            BuiltinInlineKind.LET,
+            BuiltinInlineKind.ALSO,
+            BuiltinInlineKind.APPLY,
+            BuiltinInlineKind.RUN,
         )
 
     private val KNOWN_INLINE_COROUTINE_BUILDERS: Set<String> =

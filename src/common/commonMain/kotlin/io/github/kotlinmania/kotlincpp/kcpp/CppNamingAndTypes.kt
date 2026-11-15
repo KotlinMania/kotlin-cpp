@@ -36,12 +36,15 @@ public object CppNamingPolicy {
     public fun toSnakeCase(raw: String): String {
         val cleaned = sanitizeRawIdentifier(raw)
         if (cleaned.isEmpty()) return "unnamed_val"
+        val preserveLeadingUnderscore =
+            cleaned.length > 1 && cleaned.startsWith('_') && cleaned[1].isLowerCase()
         val preserveTrailingUnderscore =
             cleaned.length > 1 && cleaned.endsWith('_') && !cleaned.startsWith('_') && cleaned.any { it != '_' }
         val words = splitIdentifierWords(cleaned)
         if (words.isEmpty()) return escapeCppKeyword(cleaned.lowercase())
         val joined = words.joinToString("_") { it.lowercase() }
-        val candidate = if (preserveTrailingUnderscore) "${joined}_" else joined
+        val prefixed = if (preserveLeadingUnderscore) "_$joined" else joined
+        val candidate = if (preserveTrailingUnderscore) "${prefixed}_" else prefixed
         return escapeCppKeyword(candidate)
     }
 
@@ -114,8 +117,10 @@ public object CppNamingPolicy {
         return words
     }
 
-    private fun escapeCppKeyword(candidate: String): String =
-        if (candidate in CPP23_RESERVED_KEYWORDS) "${candidate}_val" else candidate
+    private fun escapeCppKeyword(candidate: String): String {
+        if (candidate !in CPP23_RESERVED_KEYWORDS) return candidate
+        return if (candidate.none { it in 'a'..'z' }) "${candidate}_VAL" else "${candidate}_val"
+    }
 
     private val CPP23_RESERVED_KEYWORDS: Set<String> =
         setOf(
@@ -214,6 +219,8 @@ public object CppNamingPolicy {
             "assert",
             "NULL",
             "EOF",
+            "TRUE",
+            "FALSE",
         )
 }
 
@@ -235,14 +242,25 @@ internal class CppIncludeCollector(
     var needsNullUnwrapDef: Boolean = false
     var needsResultHelpersDef: Boolean = false
     var needsAutoCloseableDef: Boolean = false
+    var needsStringBuilderDef: Boolean = false
     var needsAtomicReferenceDef: Boolean = false
+    var needsCopyableAtomicDef: Boolean = false
     var needsSharedFromThisDef: Boolean = false
     var needsTimeMarkOpsDef: Boolean = false
     var needsIntRangeDef: Boolean = false
     var needsCastHelpersDef: Boolean = false
+    var needsAnyEqDef: Boolean = false
     var needsContextOpsDef: Boolean = false
     var needsTrimIndentDef: Boolean = false
     var needsDarwinDispatchHelpers: Boolean = false
+    var needsDarwinHeaders: Boolean = false
+    var needsPthreadInclude: Boolean = false
+    var needsSuspendBoxHelpersDef: Boolean = false
+    var needsCoroutineIntrinsicsBridgeDef: Boolean = false
+    var needsVarargDef: Boolean = false
+    var needsArrayListInitDef: Boolean = false
+    var needsIterableHelpersDef: Boolean = false
+    var needsEmptyContainersDef: Boolean = false
     var hasExpectDeclarations: Boolean = false
 
     fun addSystem(header: String) {
@@ -252,7 +270,11 @@ internal class CppIncludeCollector(
     fun addProject(header: String) {
         val normalized = header.removeSurrounding("\"")
         if (normalized.isNotEmpty() && normalized != selfHeaderPath) {
-            projectHeaders.add(normalized)
+            if (CppTypeTranslator.shouldDeferHeaderInclude(normalized, selfHeaderPath)) {
+                deferredBottomProjectHeaders.add(normalized)
+            } else {
+                projectHeaders.add(normalized)
+            }
         }
     }
 
@@ -281,6 +303,7 @@ internal enum class CppTypePosition {
     PARAMETER,
     EXTENSION_RECEIVER,
     TYPE_ARGUMENT,
+    SUPERTYPE,
 }
 
 /**
@@ -298,11 +321,16 @@ internal class CppTypeTranslator(
     private val localClassTypeParams: Map<String, List<String>> = emptyMap(),
     private val sharedTypeParamNames: Set<String> = emptySet(),
     private val sharedHierarchyTypeNames: Set<String> = SHARED_HIERARCHY_TYPES,
+    private val sharedPtrTypeAliases: Set<String> = emptySet(),
+    private val nonInnerNestedRewrites: Map<Pair<String, String>, String> = emptyMap(),
+    private val uniqueNonInnerNestedCppNames: Map<String, String> = emptyMap(),
+    private val localClassCppNames: Map<String, String> = emptyMap(),
 ) {
     fun translateTypeFrame(
         typeFrame: PacketFrame?,
         position: CppTypePosition = CppTypePosition.VALUE,
         extraFlags: Long = PacketFlags.NONE,
+        enclosingClassName: String? = null,
     ): String {
         if (typeFrame == null) {
             return if (position == CppTypePosition.RETURN) "void" else "auto"
@@ -310,13 +338,14 @@ internal class CppTypeTranslator(
         return when (typeFrame.nodeTypeId) {
             KtNodeTypes.TYPE_REFERENCE_ID -> {
                 val inner = FrameAstHelpers.childFrames(stream, typeFrame).firstOrNull { it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID }
-                translateTypeFrame(inner, position, extraFlags or typeFrame.flags)
+                translateTypeFrame(inner, position, extraFlags or typeFrame.flags, enclosingClassName)
             }
             KtNodeTypes.NULLABLE_TYPE_ID -> {
                 val inner = FrameAstHelpers.childFrames(stream, typeFrame).firstOrNull { it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID }
-                translateNullableInner(inner, position, extraFlags or typeFrame.flags)
+                translateNullableInner(inner, position, extraFlags or typeFrame.flags, enclosingClassName)
             }
-            KtNodeTypes.USER_TYPE_ID -> translateUserType(typeFrame, position, extraFlags or typeFrame.flags)
+            KtNodeTypes.USER_TYPE_ID ->
+                translateUserType(typeFrame, position, extraFlags or typeFrame.flags, enclosingClassName)
             KtNodeTypes.FUNCTION_TYPE_ID -> translateFunctionType(typeFrame, isNullable = false, extraFlags or typeFrame.flags)
             KtNodeTypes.DYNAMIC_TYPE_ID -> {
                 includes.addSystem("any")
@@ -347,6 +376,7 @@ internal class CppTypeTranslator(
         inner: PacketFrame?,
         position: CppTypePosition,
         flags: Long,
+        enclosingClassName: String? = null,
     ): String {
         if (inner == null) {
             includes.addSystem("any")
@@ -370,14 +400,28 @@ internal class CppTypeTranslator(
             if (simpleName == "COpaquePointer" || simpleName == "NativePtr") {
                 return "void*"
             }
-            if (simpleName == "CPointer" || simpleName == "CValuesRef" || simpleName == "CPointerVar") {
-                return translateUserType(inner, position, flags)
+            if (simpleName == "CPointer" ||
+                simpleName == "CValuesRef" ||
+                simpleName == "CPointerVar" ||
+                simpleName == "dispatch_queue_t" ||
+                simpleName == "dispatch_block_t" ||
+                simpleName == "dispatch_object_t" ||
+                simpleName == "dispatch_source_t" ||
+                (simpleName.startsWith("CF") && simpleName.endsWith("Ref"))
+            ) {
+                return translateUserType(inner, position, flags, enclosingClassName)
             }
             if (simpleName in sharedHierarchyTypeNames ||
                 simpleName in sharedTypeParamNames ||
                 PacketFlags.hasFlag(flags, PacketFlags.SHARED_OWNER)
             ) {
-                val base = translateUserType(inner, CppTypePosition.TYPE_ARGUMENT, flags and PacketFlags.SHARED_OWNER.inv())
+                val base =
+                    translateUserType(
+                        inner,
+                        CppTypePosition.TYPE_ARGUMENT,
+                        flags and PacketFlags.SHARED_OWNER.inv(),
+                        enclosingClassName,
+                    )
                 if (config.gcMode == CppGcMode.KONAN_GC &&
                     PacketFlags.hasFlag(flags, PacketFlags.GC_PERSISTENT_EXTERNAL_RC)
                 ) {
@@ -394,6 +438,12 @@ internal class CppTypeTranslator(
             }
         }
         val nonNull = translateTypeFrame(inner, CppTypePosition.TYPE_ARGUMENT, flags)
+        if (inner.nodeTypeId == KtNodeTypes.USER_TYPE_ID) {
+            val simpleName = extractUserTypeSimpleName(inner)
+            if (simpleName in sharedPtrTypeAliases) {
+                return nonNull
+            }
+        }
         if (nonNull.endsWith("*") ||
             nonNull.startsWith("std::shared_ptr<") ||
             nonNull.startsWith("std::function<") ||
@@ -412,13 +462,14 @@ internal class CppTypeTranslator(
             includes.addSystem("stdexcept")
             return "std::runtime_error" to true
         }
-        return translateTypeFrame(typeFrame, CppTypePosition.TYPE_ARGUMENT) to false
+        return translateTypeFrame(typeFrame, CppTypePosition.SUPERTYPE) to false
     }
 
     private fun translateUserType(
         userTypeFrame: PacketFrame,
         position: CppTypePosition,
         flags: Long,
+        enclosingClassName: String? = null,
     ): String {
         val qualifiedParts = collectUserTypeSegments(userTypeFrame)
         val simpleName = qualifiedParts.lastOrNull() ?: "void"
@@ -442,7 +493,10 @@ internal class CppTypeTranslator(
             }
 
         if (simpleName in typeParamNames && typeArgs.isEmpty()) {
-            if (simpleName in sharedTypeParamNames && position != CppTypePosition.TYPE_ARGUMENT) {
+            if (simpleName in sharedTypeParamNames &&
+                position != CppTypePosition.TYPE_ARGUMENT &&
+                position != CppTypePosition.SUPERTYPE
+            ) {
                 includes.addSystem("memory")
                 return "std::shared_ptr<$simpleName>"
             }
@@ -468,7 +522,13 @@ internal class CppTypeTranslator(
             "Unit" -> {
                 if (position != CppTypePosition.RETURN) {
                     includes.addProject("kotlinx/coroutines/Unit.hpp")
-                    return "Unit"
+                    return if (currentNamespaceSegments.isNotEmpty() &&
+                        !isEnclosingOrSameNamespace(NS_CORO, currentNamespaceSegments)
+                    ) {
+                        "kotlinx::coroutines::Unit"
+                    } else {
+                        "Unit"
+                    }
                 }
                 return "void"
             }
@@ -520,8 +580,9 @@ internal class CppTypeTranslator(
                 includes.addSystem("string_view")
                 return "std::string_view"
             }
-            "Any" -> {
-                if (config.gcMode == CppGcMode.KONAN_GC &&
+            "Any", "StackTraceElement" -> {
+                if (simpleName == "Any" &&
+                    config.gcMode == CppGcMode.KONAN_GC &&
                     PacketFlags.hasFlag(flags, PacketFlags.GC_MANAGED_OBJECT_REF)
                 ) {
                     includes.addProject("kotlinx/coroutines/KotlinGCBridge.hpp")
@@ -621,6 +682,11 @@ internal class CppTypeTranslator(
                 val elem = typeArgs.firstOrNull() ?: "std::any"
                 return "KxsArrayDeque<$elem>"
             }
+            "StringBuilder" -> {
+                includes.addSystem("string")
+                includes.needsStringBuilderDef = true
+                return "KxsStringBuilder"
+            }
             "Sequence" -> {
                 includes.addSystem("vector")
                 includes.needsSequenceAlias = true
@@ -642,10 +708,39 @@ internal class CppTypeTranslator(
                 includes.needsTimeMarkOpsDef = true
                 return "kotlin::time::Duration"
             }
+            "DurationUnit" -> {
+                includes.addProject("kotlin/time/Duration.hpp")
+                return "kotlin::time::DurationUnit"
+            }
             "TimeSource" -> {
                 includes.addProject("kotlin/time/TimeSource.hpp")
+                includes.addSystem("cstdint")
                 includes.needsTimeMarkOpsDef = true
+                if (position != CppTypePosition.TYPE_ARGUMENT && position != CppTypePosition.SUPERTYPE) {
+                    includes.addSystem("memory")
+                    return "std::shared_ptr<kotlin::time::TimeSource>"
+                }
                 return "kotlin::time::TimeSource"
+            }
+            "WithComparableMarks" -> {
+                includes.addProject("kotlin/time/TimeSource.hpp")
+                includes.addSystem("cstdint")
+                includes.needsTimeMarkOpsDef = true
+                if (position != CppTypePosition.TYPE_ARGUMENT && position != CppTypePosition.SUPERTYPE) {
+                    includes.addSystem("memory")
+                    return "std::shared_ptr<kotlin::time::TimeSource::WithComparableMarks>"
+                }
+                return "kotlin::time::TimeSource::WithComparableMarks"
+            }
+            "AbstractLongTimeSource" -> {
+                includes.addProject("kotlin/time/TimeSource.hpp")
+                includes.addSystem("cstdint")
+                includes.needsTimeMarkOpsDef = true
+                if (position != CppTypePosition.TYPE_ARGUMENT && position != CppTypePosition.SUPERTYPE) {
+                    includes.addSystem("memory")
+                    return "std::shared_ptr<kotlin::time::AbstractLongTimeSource>"
+                }
+                return "kotlin::time::AbstractLongTimeSource"
             }
             "TimeMark" -> {
                 includes.addProject("kotlin/time/TimeSource.hpp")
@@ -660,12 +755,14 @@ internal class CppTypeTranslator(
                 return "kotlin::time::ValueTimeMark"
             }
             "Worker" -> {
-                includes.addProject("kotlin/native/concurrent/Worker.hpp")
-                return "kotlin::native::concurrent::Worker"
+                if ("Worker" !in localClassNames) {
+                    includes.addProject("kotlin/native/concurrent/Worker.hpp")
+                    return "kotlin::native::concurrent::Worker"
+                }
             }
             "AutoCloseable" -> {
                 includes.needsAutoCloseableDef = true
-                if (position != CppTypePosition.TYPE_ARGUMENT) {
+                if (position != CppTypePosition.TYPE_ARGUMENT && position != CppTypePosition.SUPERTYPE) {
                     includes.addSystem("memory")
                     return "std::shared_ptr<AutoCloseable>"
                 }
@@ -734,8 +831,8 @@ internal class CppTypeTranslator(
                 return "std::atomic<bool>"
             }
             "AtomicRef" -> {
-                val rawT = typeArgs.firstOrNull() ?: "void*"
-                if (rawT.startsWith("std::shared_ptr<")) {
+                val rawT = typeArgs.firstOrNull() ?: "std::any"
+                if (rawT !in TRIVIAL_ATOMIC_SCALAR_TYPES && !rawT.endsWith("*")) {
                     includes.addSystem("mutex")
                     includes.needsAtomicReferenceDef = true
                     return "KxsAtomicReference<$rawT>"
@@ -771,11 +868,47 @@ internal class CppTypeTranslator(
                 val t = typeArgs.firstOrNull() ?: "void*"
                 return "ThreadLocal<$t>"
             }
+            "SuspendFunction0",
+            "SuspendFunction1",
+            "SuspendFunction2",
+            "SuspendFunction3",
+            -> {
+                includes.addProject("kotlinx/coroutines/SuspendFunction.hpp")
+                val arity = simpleName.removePrefix("SuspendFunction").toInt()
+                val retT = typeArgs.getOrNull(arity) ?: "void"
+                val paramTs = (0 until arity).map { i -> typeArgs.getOrNull(i) ?: "std::any" }
+                val allArgs = listOf(retT) + paramTs
+                val prefix =
+                    if (isEnclosingOrSameNamespace(NS_CORO, currentNamespaceSegments)) {
+                        ""
+                    } else {
+                        "kotlinx::coroutines::"
+                    }
+                return "${prefix}SuspendFunction<${allArgs.joinToString(", ")}>"
+            }
+            "KFunction0",
+            "KFunction1",
+            "KFunction2",
+            "KFunction3",
+            -> {
+                includes.addSystem("functional")
+                val arity = simpleName.removePrefix("KFunction").toInt()
+                val retT = typeArgs.getOrNull(arity) ?: "void"
+                val paramTs = (0 until arity).map { i -> typeArgs.getOrNull(i) ?: "std::any" }
+                return "std::function<$retT(${paramTs.joinToString(", ")})>"
+            }
+            "Comparable" -> {
+                includes.addProject("kotlin/Comparable.hpp")
+                val elem = typeArgs.firstOrNull() ?: "std::any"
+                return "kotlin::Comparable<$elem>"
+            }
         }
 
         if (simpleName == "CancellationException") {
             includes.addProject("kotlin/coroutines/cancellation/CancellationException.hpp")
             return "kotlin::coroutines::cancellation::CancellationException"
+        } else if (simpleName == "SuspendFunction") {
+            includes.addProject("kotlinx/coroutines/SuspendFunction.hpp")
         } else if (simpleName == "Continuation") {
             includes.addProject("kotlinx/coroutines/Continuation.hpp")
         } else if (simpleName == "ContinuationInterceptor") {
@@ -796,7 +929,18 @@ internal class CppTypeTranslator(
             qualifiedParts[1] == "Key" &&
             typeArgs.isNotEmpty()
         ) {
-            return "CoroutineContext::KeyTyped<${typeArgs.joinToString(", ")}>"
+            val hasStarArg =
+                typeArgsFrame != null &&
+                    FrameAstHelpers
+                        .childFramesOfType(stream, typeArgsFrame, KtNodeTypes.TYPE_PROJECTION_ID)
+                        .any { proj ->
+                            FrameAstHelpers.firstChildFrame(stream, proj, KtNodeTypes.TYPE_REFERENCE_ID) == null
+                        }
+            return if (hasStarArg && position != CppTypePosition.SUPERTYPE) {
+                "kotlin::coroutines::CoroutineContext::Key*"
+            } else {
+                "CoroutineContext::KeyTyped<${typeArgs.joinToString(", ")}>"
+            }
         }
 
         val knownCoroType =
@@ -822,25 +966,81 @@ internal class CppTypeTranslator(
             }
         }
 
+        val nonInnerRewrite =
+            if (qualifiedParts.size >= 2) {
+                nonInnerNestedRewrites[qualifiedParts[qualifiedParts.size - 2] to simpleName]
+            } else {
+                null
+            }
+        val qualifier =
+            if (qualifiedParts.size > 1 && nonInnerRewrite == null) {
+                FrameAstHelpers.firstChildFrame(stream, userTypeFrame, KtNodeTypes.USER_TYPE_ID)
+            } else {
+                null
+            }
+        val qualTypeArgsFrame =
+            qualifier?.let { FrameAstHelpers.firstChildFrame(stream, it, KtNodeTypes.TYPE_ARGUMENT_LIST_ID) }
+        val qualSimple = qualifier?.let { collectUserTypeSegments(it).lastOrNull() }
+        val qualIsStarProjectedOnEnclosing =
+            enclosingClassName != null &&
+                qualSimple == enclosingClassName &&
+                qualTypeArgsFrame != null &&
+                FrameAstHelpers
+                    .childFramesOfType(stream, qualTypeArgsFrame, KtNodeTypes.TYPE_PROJECTION_ID)
+                    .all { proj ->
+                        FrameAstHelpers.firstChildFrame(stream, proj, KtNodeTypes.TYPE_REFERENCE_ID) == null
+                    }
+        val preserveGenericQualifier =
+            qualifier != null &&
+                simpleName != "Companion" &&
+                !qualIsStarProjectedOnEnclosing &&
+                (qualTypeArgsFrame != null || (qualSimple != null && qualSimple in localClassTypeParams))
+
         val cppName =
-            if (qualifiedParts.size > 1) {
-                val prefix =
-                    qualifiedParts.dropLast(1).joinToString("::") { seg ->
-                        if (seg.firstOrNull()?.isUpperCase() == true) {
-                            CppNamingPolicy.toTypeName(seg)
-                        } else {
+            when {
+                nonInnerRewrite != null -> {
+                    val nsPrefix =
+                        qualifiedParts.dropLast(2).joinToString("::") { seg ->
                             CppNamingPolicy.toNamespaceSegment(seg)
                         }
+                    if (nsPrefix.isEmpty()) nonInnerRewrite else "$nsPrefix::$nonInnerRewrite"
+                }
+                preserveGenericQualifier -> {
+                    val qualCpp =
+                        translateUserType(qualifier, CppTypePosition.TYPE_ARGUMENT, PacketFlags.NONE, enclosingClassName)
+                    val nestedCpp = CppNamingPolicy.toTypeName(simpleName)
+                    val isDependent =
+                        typeParamNames.any { tp ->
+                            Regex("""(?<![A-Za-z0-9_])${Regex.escape(tp)}(?![A-Za-z0-9_])""").containsMatchIn(qualCpp)
+                        }
+                    if (isDependent && position != CppTypePosition.SUPERTYPE) {
+                        "typename $qualCpp::$nestedCpp"
+                    } else {
+                        "$qualCpp::$nestedCpp"
                     }
-                "$prefix::${CppNamingPolicy.toTypeName(simpleName)}"
-            } else if (
+                }
+                qualifiedParts.size > 1 -> {
+                    val prefix =
+                        qualifiedParts.dropLast(1).joinToString("::") { seg ->
+                            if (seg.firstOrNull()?.isUpperCase() == true) {
+                                CppNamingPolicy.toTypeName(seg)
+                            } else {
+                                CppNamingPolicy.toNamespaceSegment(seg)
+                            }
+                        }
+                    "$prefix::${CppNamingPolicy.toTypeName(simpleName)}"
+                }
                 knownCoroType != null &&
-                currentNamespaceSegments.isNotEmpty() &&
-                !isEnclosingOrSameNamespace(knownCoroType.namespaceSegments, currentNamespaceSegments)
-            ) {
-                "${knownCoroType.namespaceSegments.joinToString("::")}::${CppNamingPolicy.toTypeName(simpleName)}"
-            } else {
-                CppNamingPolicy.toTypeName(simpleName)
+                    currentNamespaceSegments.isNotEmpty() &&
+                    !isEnclosingOrSameNamespace(knownCoroType.namespaceSegments, currentNamespaceSegments)
+                -> {
+                    "${knownCoroType.namespaceSegments.joinToString("::")}::${CppNamingPolicy.toTypeName(simpleName)}"
+                }
+                else -> {
+                    localClassCppNames[simpleName]
+                        ?: uniqueNonInnerNestedCppNames[simpleName]
+                        ?: CppNamingPolicy.toTypeName(simpleName)
+                }
             }
 
         val parameterized =
@@ -870,7 +1070,8 @@ internal class CppTypeTranslator(
             }
 
         if ((simpleName in sharedHierarchyTypeNames || PacketFlags.hasFlag(flags, PacketFlags.SHARED_OWNER)) &&
-            position != CppTypePosition.TYPE_ARGUMENT
+            position != CppTypePosition.TYPE_ARGUMENT &&
+            position != CppTypePosition.SUPERTYPE
         ) {
             includes.addSystem("memory")
             return "std::shared_ptr<$parameterized>"
@@ -959,7 +1160,47 @@ internal class CppTypeTranslator(
                 val target = typeArgs.firstOrNull() ?: "void*"
                 if (target.endsWith("*")) "$target*" else "$target**"
             }
-            else -> null
+            "dispatch_queue_t",
+            "dispatch_time_t",
+            "dispatch_block_t",
+            "dispatch_object_t",
+            "dispatch_source_t",
+            -> {
+                includes.needsDarwinHeaders = true
+                simpleName
+            }
+            "CFRunLoopRef",
+            "CFRunLoopTimerRef",
+            "CFAllocatorRef",
+            "CFStringRef",
+            "CFRunLoopMode",
+            "CFRunLoopObserverRef",
+            "CFTimeInterval",
+            "CFAbsoluteTime",
+            "CFOptionFlags",
+            "CFIndex",
+            -> {
+                includes.needsDarwinHeaders = true
+                simpleName
+            }
+            "pthread_t",
+            "pthread_mutex_t",
+            "pthread_cond_t",
+            "pthread_attr_t",
+            "pthread_key_t",
+            -> {
+                includes.needsPthreadInclude = true
+                includes.addSystem("pthread.h")
+                simpleName
+            }
+            else ->
+                when {
+                    simpleName.startsWith("CF") && simpleName.endsWith("Ref") -> {
+                        includes.needsDarwinHeaders = true
+                        simpleName
+                    }
+                    else -> null
+                }
         }
 
     private fun translateFunctionType(
@@ -1003,7 +1244,13 @@ internal class CppTypeTranslator(
         if (isSuspend) {
             includes.addProject("kotlinx/coroutines/SuspendFunction.hpp")
             val allArgs = listOf(retType) + paramTypes
-            val base = "SuspendFunction<${allArgs.joinToString(", ")}>"
+            val prefix =
+                if (isEnclosingOrSameNamespace(NS_CORO, currentNamespaceSegments)) {
+                    ""
+                } else {
+                    "kotlinx::coroutines::"
+                }
+            val base = "${prefix}SuspendFunction<${allArgs.joinToString(", ")}>"
             if (isNullable) {
                 includes.addSystem("optional")
                 return "std::optional<$base>"
@@ -1105,6 +1352,7 @@ internal class CppTypeTranslator(
                 "CancellableContinuationImpl",
                 "DispatchedTask",
                 "Segment",
+                "SelectImplementation",
             )
 
         val VALUE_CONTAINER_TYPES: Set<String> =
@@ -1168,7 +1416,6 @@ internal class CppTypeTranslator(
                 "SelectImplementation",
                 "SelectInstanceInternal",
                 "UnbiasedSelectImplementation",
-                "ThreadSafeHeap",
                 "LockFreeTaskQueue",
                 "LockFreeTaskQueueCore",
                 "AbstractSharedFlowSlot",
@@ -1176,8 +1423,11 @@ internal class CppTypeTranslator(
                 "OnUndeliveredElement",
                 "ChannelFlow",
                 "ChannelFlowOperator",
+                "ChannelFlowOperatorImpl",
                 "FusibleFlow",
                 "SafeCollector",
+                "SendingCollector",
+                "SubscribedFlowCollector",
             )
 
         val KOTLIN_STDLIB_EXCEPTION_CLASSES: Set<String> =
@@ -1199,6 +1449,9 @@ internal class CppTypeTranslator(
         val SHARED_HIERARCHY_TYPES: Set<String> =
             setOf(
                 "AutoCloseable",
+                "BroadcastCoroutine",
+                "LazyBroadcastCoroutine",
+                "DispatchedCoroutine",
                 "Continuation",
                 "CancellableContinuation",
                 "CancellableContinuationImpl",
@@ -1248,6 +1501,7 @@ internal class CppTypeTranslator(
                 "CoroutineDispatcher",
                 "CloseableCoroutineDispatcher",
                 "MainCoroutineDispatcher",
+                "NamedDispatcher",
                 "WorkerDispatcher",
                 "EventLoop",
                 "EventLoopImplBase",
@@ -1281,6 +1535,7 @@ internal class CppTypeTranslator(
                 "SubscriptionCountStateFlow",
                 "ChannelFlow",
                 "ChannelFlowOperator",
+                "ChannelFlowOperatorImpl",
                 "FusibleFlow",
                 "SafeCollector",
                 "TestScope",
@@ -1324,6 +1579,10 @@ internal class CppTypeTranslator(
                 "DisposeOnCompletion",
                 "CancellableContinuationWithOwner",
                 "SelectInstanceWithOwner",
+                "ErrorCatching",
+                "NonDisposableHandle",
+                "SendingCollector",
+                "SubscribedFlowCollector",
             )
 
         private data class KnownCoroutineType(
@@ -1357,6 +1616,8 @@ internal class CppTypeTranslator(
         fun isKnownTemplateClass(simpleName: String): Boolean =
             (KNOWN_COROUTINE_TYPES[simpleName]?.templateArity ?: 0) > 0 || simpleName == "Continuation"
 
+        fun knownTemplateArity(simpleName: String): Int = KNOWN_COROUTINE_TYPES[simpleName]?.templateArity ?: 0
+
         fun lookupKnownHeaderForType(simpleName: String): String? = KNOWN_COROUTINE_TYPES[simpleName]?.headerPath
 
         fun lookupKnownHeaderForSymbol(simpleName: String): String? =
@@ -1386,6 +1647,43 @@ internal class CppTypeTranslator(
                 KNOWN_COROUTINE_VALUE_SYMBOLS.values.any {
                     it.headerPath == targetHeader && selfHeaderPath in it.skipIncludeFromHeaders
                 }
+        }
+
+        fun isCycleParticipantHeader(relPath: String): Boolean {
+            if (relPath.isEmpty()) return false
+            return relPath in HEADER_CYCLE_DEFERRALS.keys ||
+                HEADER_CYCLE_DEFERRALS.values.any { relPath in it } ||
+                KNOWN_COROUTINE_TYPES.values.any {
+                    (it.headerPath == relPath && it.skipIncludeFromHeaders.isNotEmpty()) ||
+                        relPath in it.skipIncludeFromHeaders
+                } ||
+                KNOWN_COROUTINE_VALUE_SYMBOLS.values.any {
+                    (it.headerPath == relPath && it.skipIncludeFromHeaders.isNotEmpty()) ||
+                        relPath in it.skipIncludeFromHeaders
+                }
+        }
+
+        fun cyclePeersForHeader(relPath: String): List<String> {
+            if (relPath.isEmpty()) return emptyList()
+            val candidates = LinkedHashSet<String>()
+            candidates.addAll(HEADER_CYCLE_DEFERRALS.keys)
+            HEADER_CYCLE_DEFERRALS.values.forEach { candidates.addAll(it) }
+            KNOWN_COROUTINE_TYPES.values.forEach {
+                if (it.skipIncludeFromHeaders.isNotEmpty()) {
+                    candidates.add(it.headerPath)
+                    candidates.addAll(it.skipIncludeFromHeaders)
+                }
+            }
+            KNOWN_COROUTINE_VALUE_SYMBOLS.values.forEach {
+                if (it.skipIncludeFromHeaders.isNotEmpty()) {
+                    candidates.add(it.headerPath)
+                    candidates.addAll(it.skipIncludeFromHeaders)
+                }
+            }
+            return candidates
+                .filter { h ->
+                    h != relPath && (shouldDeferHeaderInclude(h, relPath) || shouldDeferHeaderInclude(relPath, h))
+                }.sorted()
         }
 
         fun includeAndQualifyKnownType(
@@ -1438,6 +1736,17 @@ internal class CppTypeTranslator(
             return includeAndQualifyKnownType(kotlinName, cppBaseName, currentNs, includes)
         }
 
+        private val SELECT_REVERSE_CYCLE_HEADERS: Set<String> =
+            setOf(
+                "kotlinx/coroutines/Job.hpp",
+                "kotlinx/coroutines/JobSupport.hpp",
+                "kotlinx/coroutines/Deferred.hpp",
+                "kotlinx/coroutines/Waiter.hpp",
+                "kotlinx/coroutines/Delay.hpp",
+                "kotlinx/coroutines/channels/Channel.hpp",
+                "kotlinx/coroutines/sync/Mutex.hpp",
+            )
+
         private val KNOWN_COROUTINE_VALUE_SYMBOLS: Map<String, KnownCoroutineValueSymbol> =
             mapOf(
                 "delay" to KnownCoroutineValueSymbol("kotlinx/coroutines/Delay.hpp", NS_CORO),
@@ -1464,8 +1773,38 @@ internal class CppTypeTranslator(
                 "newCoroutineContext" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineContext.common.hpp", NS_CORO),
                 "withCoroutineContext" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineContext.common.hpp", NS_CORO),
                 "withContinuationContext" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineContext.common.hpp", NS_CORO),
-                "DefaultDelay" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineContext.common.hpp", NS_CORO),
+                "DefaultDelay" to KnownCoroutineValueSymbol("kotlinx/coroutines/native/CoroutineContext.hpp", NS_CORO),
                 "toDebugString" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineContext.common.hpp", NS_CORO),
+                "ensureActive" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "cancel" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "cancelAndJoin" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "cancelChildren" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "isActive" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "job" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "NonDisposableHandle" to KnownCoroutineValueSymbol("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "awaitAll" to KnownCoroutineValueSymbol("kotlinx/coroutines/Await.hpp", NS_CORO),
+                "joinAll" to KnownCoroutineValueSymbol("kotlinx/coroutines/Await.hpp", NS_CORO),
+                "trySelectDetailedResult" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/selects/Select.hpp",
+                        NS_SELECTS,
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "produce" to KnownCoroutineValueSymbol("kotlinx/coroutines/channels/Produce.hpp", NS_CHANNELS),
+                "broadcast" to KnownCoroutineValueSymbol("kotlinx/coroutines/channels/Broadcast.hpp", NS_CHANNELS),
+                "DEFAULT_CLOSE_MESSAGE" to
+                    KnownCoroutineValueSymbol(
+                        headerPath = "kotlinx/coroutines/channels/Channels.common.hpp",
+                        namespaceSegments = NS_CHANNELS,
+                        skipIncludeFromHeaders = setOf("kotlinx/coroutines/channels/Channel.hpp"),
+                    ),
+                "cancelConsumed" to
+                    KnownCoroutineValueSymbol(
+                        headerPath = "kotlinx/coroutines/channels/Channels.common.hpp",
+                        namespaceSegments = NS_CHANNELS,
+                        skipIncludeFromHeaders = setOf("kotlinx/coroutines/channels/Channel.hpp"),
+                    ),
+                "CoroutineExceptionHandler" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineExceptionHandler.hpp", NS_CORO),
                 "handleCoroutineException" to KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineExceptionHandler.hpp", NS_CORO),
                 "recoverResult" to KnownCoroutineValueSymbol("kotlinx/coroutines/CompletionState.hpp", NS_CORO),
                 "toState" to KnownCoroutineValueSymbol("kotlinx/coroutines/CompletionState.hpp", NS_CORO),
@@ -1485,7 +1824,7 @@ internal class CppTypeTranslator(
                 "DEBUG" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
                 "assert" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
                 "ASSERTIONS_ENABLED" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
-                "RECOVER_STACK_TRACES" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
+                "RECOVER_STACK_TRACES" to KnownCoroutineValueSymbol("kotlinx/coroutines/Exceptions.hpp", NS_CORO),
                 "hexAddress" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
                 "classSimpleName" to KnownCoroutineValueSymbol("kotlinx/coroutines/Debug.common.hpp", NS_CORO),
                 "ThreadLocalEventLoop" to KnownCoroutineValueSymbol("kotlinx/coroutines/EventLoop.common.hpp", NS_CORO),
@@ -1496,6 +1835,28 @@ internal class CppTypeTranslator(
                 "recoverAndThrow" to KnownCoroutineValueSymbol("kotlinx/coroutines/internal/StackTraceRecovery.common.hpp", NS_INTERNAL),
                 "unwrap" to KnownCoroutineValueSymbol("kotlinx/coroutines/internal/StackTraceRecovery.common.hpp", NS_INTERNAL),
                 "resumeCancellableWith" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
+                        NS_INTERNAL,
+                        skipIncludeFromHeaders =
+                            setOf(
+                                "kotlinx/coroutines/CoroutineDispatcher.hpp",
+                                "kotlinx/coroutines/DispatchedTask.hpp",
+                                "kotlinx/coroutines/EventLoop.common.hpp",
+                            ),
+                    ),
+                "safeDispatch" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
+                        NS_INTERNAL,
+                        skipIncludeFromHeaders =
+                            setOf(
+                                "kotlinx/coroutines/CoroutineDispatcher.hpp",
+                                "kotlinx/coroutines/DispatchedTask.hpp",
+                                "kotlinx/coroutines/EventLoop.common.hpp",
+                            ),
+                    ),
+                "safeIsDispatchNeeded" to
                     KnownCoroutineValueSymbol(
                         "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
                         NS_INTERNAL,
@@ -1518,15 +1879,58 @@ internal class CppTypeTranslator(
                 "callUndeliveredElement" to KnownCoroutineValueSymbol("kotlinx/coroutines/internal/OnUndeliveredElement.hpp", NS_INTERNAL),
                 "callUndeliveredElementCatchingException" to KnownCoroutineValueSymbol("kotlinx/coroutines/internal/OnUndeliveredElement.hpp", NS_INTERNAL),
                 "bindCancellationFun" to KnownCoroutineValueSymbol("kotlinx/coroutines/internal/OnUndeliveredElement.hpp", NS_INTERNAL),
+                "intercepted" to KnownCoroutineValueSymbol("kotlinx/coroutines/ContinuationBindings.hpp", listOf("kotlin", "coroutines", "intrinsics")),
+                "createCoroutineUnintercepted" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/IntrinsicsNative.hpp", listOf("kotlin", "coroutines", "intrinsics")),
+                "startCoroutineUninterceptedOrReturn" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/IntrinsicsNative.hpp", listOf("kotlin", "coroutines", "intrinsics")),
                 "startCoroutineCancellable" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/Cancellable.hpp", NS_INTRINSICS),
                 "startCoroutineUndispatched" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/Undispatched.hpp", NS_INTRINSICS),
                 "startDirect" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/Undispatched.hpp", NS_INTRINSICS),
                 "startUndispatchedOrReturn" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/Undispatched.hpp", NS_INTRINSICS),
                 "startUndispatchedOrReturnIgnoreTimeout" to KnownCoroutineValueSymbol("kotlinx/coroutines/intrinsics/Undispatched.hpp", NS_INTRINSICS),
                 "checkContext" to KnownCoroutineValueSymbol("kotlinx/coroutines/flow/internal/SafeCollector.common.hpp", NS_FLOW_INTERNAL),
+                "BroadcastChannel" to
+                    KnownCoroutineValueSymbol("kotlinx/coroutines/channels/BroadcastChannel.hpp", NS_CHANNELS),
+                "isLazy" to
+                    KnownCoroutineValueSymbol("kotlinx/coroutines/CoroutineStart.hpp", NS_CORO),
+                "probeCoroutineCreated" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/internal/ProbesSupport.common.hpp",
+                        NS_INTERNAL,
+                    ),
+                "probeCoroutineResumed" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/internal/ProbesSupport.common.hpp",
+                        NS_INTERNAL,
+                    ),
+                "probeCoroutineSuspended" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/internal/ProbesSupport.common.hpp",
+                        NS_INTERNAL,
+                    ),
+                "unboxState" to KnownCoroutineValueSymbol("kotlinx/coroutines/JobSupport.hpp", NS_CORO),
                 "NULL" to KnownCoroutineValueSymbol("kotlinx/coroutines/flow/internal/NullSurrogate.hpp", NS_FLOW_INTERNAL),
                 "UNINITIALIZED" to KnownCoroutineValueSymbol("kotlinx/coroutines/flow/internal/NullSurrogate.hpp", NS_FLOW_INTERNAL),
                 "DONE" to KnownCoroutineValueSymbol("kotlinx/coroutines/flow/internal/NullSurrogate.hpp", NS_FLOW_INTERNAL),
+                "NO_VALUE" to
+                    KnownCoroutineValueSymbol(
+                        headerPath = "kotlinx/coroutines/flow/SharedFlow.hpp",
+                        namespaceSegments = NS_FLOW,
+                        skipIncludeFromHeaders =
+                            setOf(
+                                "kotlinx/coroutines/flow/StateFlow.hpp",
+                                "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp",
+                            ),
+                    ),
+                "EMPTY_RESUMES" to
+                    KnownCoroutineValueSymbol(
+                        "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp",
+                        NS_FLOW_INTERNAL,
+                    ),
+                "noImpl" to KnownCoroutineValueSymbol("kotlinx/coroutines/flow/Migration.hpp", NS_FLOW),
+                "createMainDispatcher" to KnownCoroutineValueSymbol("kotlinx/coroutines/Dispatchers.hpp", NS_CORO),
+                "Worker" to KnownCoroutineValueSymbol("kotlin/native/concurrent/Worker.hpp", listOf("kotlin", "native", "concurrent")),
+                "TransferMode" to
+                    KnownCoroutineValueSymbol("kotlin/native/concurrent/Worker.hpp", listOf("kotlin", "native", "concurrent")),
             )
 
         private fun isEnclosingOrSameNamespace(
@@ -1542,6 +1946,10 @@ internal class CppTypeTranslator(
 
         private val HEADER_CYCLE_DEFERRALS: Map<String, Set<String>> =
             mapOf(
+                "kotlinx/coroutines/Job.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/selects/Select.hpp",
+                    ),
                 "kotlinx/coroutines/Waiter.hpp" to
                     setOf(
                         "kotlinx/coroutines/internal/ConcurrentLinkedList.hpp",
@@ -1559,14 +1967,17 @@ internal class CppTypeTranslator(
                         "kotlinx/coroutines/CancellableContinuationImpl.hpp",
                         "kotlinx/coroutines/CoroutineDispatcher.hpp",
                         "kotlinx/coroutines/Delay.hpp",
+                        "kotlinx/coroutines/DispatchedTask.hpp",
                         "kotlinx/coroutines/EventLoop.common.hpp",
                         "kotlinx/coroutines/Job.hpp",
+                        "kotlinx/coroutines/selects/Select.hpp",
                     ),
                 "kotlinx/coroutines/CancellableContinuationImpl.hpp" to
                     setOf(
                         "kotlinx/coroutines/JobSupport.hpp",
                         "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
                         "kotlinx/coroutines/internal/ConcurrentLinkedList.hpp",
+                        "kotlinx/coroutines/selects/Select.hpp",
                     ),
                 "kotlinx/coroutines/internal/DispatchedContinuation.hpp" to
                     setOf(
@@ -1577,9 +1988,13 @@ internal class CppTypeTranslator(
                     ),
                 "kotlinx/coroutines/DispatchedTask.hpp" to
                     setOf(
+                        "kotlinx/coroutines/CompletionState.hpp",
+                        "kotlinx/coroutines/CoroutineContext.common.hpp",
                         "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
                         "kotlinx/coroutines/CoroutineDispatcher.hpp",
                         "kotlinx/coroutines/EventLoop.common.hpp",
+                        "kotlinx/coroutines/JobSupport.hpp",
+                        "kotlinx/coroutines/intrinsics/Undispatched.hpp",
                     ),
                 "kotlinx/coroutines/EventLoop.common.hpp" to
                     setOf(
@@ -1590,23 +2005,41 @@ internal class CppTypeTranslator(
                     ),
                 "kotlinx/coroutines/selects/Select.hpp" to
                     setOf(
-                        "kotlinx/coroutines/CancellableContinuation.hpp",
                         "kotlinx/coroutines/channels/Channel.hpp",
                         "kotlinx/coroutines/internal/ConcurrentLinkedList.hpp",
+                        "kotlinx/coroutines/JobSupport.hpp",
                     ),
                 "kotlinx/coroutines/channels/Channel.hpp" to
                     setOf(
                         "kotlinx/coroutines/channels/BufferedChannel.hpp",
                         "kotlinx/coroutines/channels/ConflatedBufferedChannel.hpp",
+                        "kotlinx/coroutines/channels/Channels.common.hpp",
                     ),
                 "kotlinx/coroutines/CoroutineScope.hpp" to
                     setOf(
                         "kotlinx/coroutines/internal/Scopes.hpp",
                         "kotlinx/coroutines/AbstractCoroutine.hpp",
+                        "kotlinx/coroutines/intrinsics/Undispatched.hpp",
                     ),
                 "kotlinx/coroutines/AbstractCoroutine.hpp" to
                     setOf(
                         "kotlinx/coroutines/internal/Scopes.hpp",
+                        "kotlinx/coroutines/intrinsics/Undispatched.hpp",
+                        "kotlinx/coroutines/intrinsics/Cancellable.hpp",
+                    ),
+                "kotlinx/coroutines/Dispatchers.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/MainCoroutineDispatcher.hpp",
+                    ),
+                "kotlinx/coroutines/MainCoroutineDispatcher.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/Dispatchers.hpp",
+                    ),
+                "kotlinx/coroutines/flow/SharingStarted.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/flow/StateFlow.hpp",
+                        "kotlinx/coroutines/flow/SharedFlow.hpp",
+                        "kotlinx/coroutines/flow/Share.hpp",
                     ),
                 "kotlinx/coroutines/flow/Flow.hpp" to
                     setOf(
@@ -1620,28 +2053,57 @@ internal class CppTypeTranslator(
                 "kotlinx/coroutines/flow/SharedFlow.hpp" to
                     setOf(
                         "kotlinx/coroutines/flow/StateFlow.hpp",
+                        "kotlinx/coroutines/flow/Share.hpp",
+                    ),
+                "kotlinx/coroutines/flow/StateFlow.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/flow/Share.hpp",
                     ),
                 "kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp" to
                     setOf(
                         "kotlinx/coroutines/flow/StateFlow.hpp",
                         "kotlinx/coroutines/flow/SharedFlow.hpp",
+                        "kotlinx/coroutines/flow/Share.hpp",
                     ),
-            )
-
-        private val SELECT_REVERSE_CYCLE_HEADERS: Set<String> =
-            setOf(
-                "kotlinx/coroutines/Job.hpp",
-                "kotlinx/coroutines/JobSupport.hpp",
-                "kotlinx/coroutines/Deferred.hpp",
-                "kotlinx/coroutines/Waiter.hpp",
-                "kotlinx/coroutines/Delay.hpp",
-                "kotlinx/coroutines/channels/Channel.hpp",
-                "kotlinx/coroutines/sync/Mutex.hpp",
+                "kotlinx/coroutines/CoroutineStart.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/intrinsics/Cancellable.hpp",
+                        "kotlinx/coroutines/intrinsics/Undispatched.hpp",
+                        "kotlinx/coroutines/CoroutineContext.common.hpp",
+                    ),
+                "kotlinx/coroutines/intrinsics/Cancellable.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
+                        "kotlinx/coroutines/DispatchedTask.hpp",
+                    ),
+                "kotlinx/coroutines/intrinsics/Undispatched.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/internal/Scopes.hpp",
+                        "kotlinx/coroutines/JobSupport.hpp",
+                        "kotlinx/coroutines/CoroutineContext.common.hpp",
+                        "kotlinx/coroutines/CompletionState.hpp",
+                        "kotlinx/coroutines/DispatchedTask.hpp",
+                        "kotlinx/coroutines/Timeout.hpp",
+                    ),
+                "kotlinx/coroutines/Timeout.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/intrinsics/Undispatched.hpp",
+                    ),
+                "kotlinx/coroutines/CoroutineContext.common.hpp" to
+                    setOf(
+                        "kotlinx/coroutines/CoroutineDispatcher.hpp",
+                        "kotlinx/coroutines/internal/DispatchedContinuation.hpp",
+                    ),
             )
 
         private val KNOWN_COROUTINE_TYPES: Map<String, KnownCoroutineType> =
             mapOf(
-                "Job" to KnownCoroutineType("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "Job" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/Job.hpp",
+                        namespaceSegments = NS_CORO,
+                        forwardDecl = "class Job;",
+                    ),
                 "DisposableHandle" to
                     KnownCoroutineType(
                         headerPath = "kotlinx/coroutines/Job.hpp",
@@ -1719,8 +2181,14 @@ internal class CppTypeTranslator(
                         skipIncludeFromHeaders = setOf("kotlinx/coroutines/EventLoop.common.hpp"),
                     ),
                 "NonCancellable" to KnownCoroutineType("kotlinx/coroutines/NonCancellable.hpp", NS_CORO),
-                "TimeoutCancellationException" to KnownCoroutineType("kotlinx/coroutines/Timeout.hpp", NS_CORO),
-                "JobCancellationException" to KnownCoroutineType("kotlinx/coroutines/Exceptions.common.hpp", NS_CORO),
+                "NonDisposableHandle" to KnownCoroutineType("kotlinx/coroutines/Job.hpp", NS_CORO),
+                "TimeoutCancellationException" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/Timeout.hpp",
+                        namespaceSegments = NS_CORO,
+                        forwardDecl = "class TimeoutCancellationException;",
+                    ),
+                "JobCancellationException" to KnownCoroutineType("kotlinx/coroutines/Exceptions.hpp", NS_CORO),
                 "CoroutinesInternalError" to KnownCoroutineType("kotlinx/coroutines/Exceptions.common.hpp", NS_CORO),
                 "CompletionHandlerException" to KnownCoroutineType("kotlinx/coroutines/Exceptions.common.hpp", NS_CORO),
                 "CopyableThrowable" to KnownCoroutineType("kotlinx/coroutines/Debug.common.hpp", NS_CORO, templateArity = 1),
@@ -1795,7 +2263,12 @@ internal class CppTypeTranslator(
                             ),
                     ),
                 "CloseableCoroutineDispatcher" to KnownCoroutineType("kotlinx/coroutines/CloseableCoroutineDispatcher.common.hpp", NS_CORO),
-                "MainCoroutineDispatcher" to KnownCoroutineType("kotlinx/coroutines/MainCoroutineDispatcher.hpp", NS_CORO),
+                "MainCoroutineDispatcher" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/MainCoroutineDispatcher.hpp",
+                        namespaceSegments = NS_CORO,
+                        forwardDecl = "class MainCoroutineDispatcher;",
+                    ),
                 "EventLoop" to
                     KnownCoroutineType(
                         headerPath = "kotlinx/coroutines/EventLoop.common.hpp",
@@ -1824,8 +2297,18 @@ internal class CppTypeTranslator(
                     ),
                 "SchedulerTask" to KnownCoroutineType("kotlinx/coroutines/SchedulerTask.common.hpp", NS_CORO),
                 "SchedulerTaskContext" to KnownCoroutineType("kotlinx/coroutines/SchedulerTask.common.hpp", NS_CORO),
-                "DispatchException" to KnownCoroutineType("kotlinx/coroutines/DispatchedTask.hpp", NS_CORO),
-                "CoroutineScope" to KnownCoroutineType("kotlinx/coroutines/CoroutineScope.hpp", NS_CORO),
+                "DispatchException" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/DispatchedTask.hpp",
+                        namespaceSegments = NS_CORO,
+                        forwardDecl = "class DispatchException;",
+                    ),
+                "CoroutineScope" to
+                    KnownCoroutineType(
+                        "kotlinx/coroutines/CoroutineScope.hpp",
+                        NS_CORO,
+                        forwardDecl = "class CoroutineScope;",
+                    ),
                 "CoroutineName" to KnownCoroutineType("kotlinx/coroutines/CoroutineName.hpp", NS_CORO),
                 "CoroutineExceptionHandler" to KnownCoroutineType("kotlinx/coroutines/CoroutineExceptionHandler.hpp", NS_CORO),
                 "CoroutineStart" to KnownCoroutineType("kotlinx/coroutines/CoroutineStart.hpp", NS_CORO),
@@ -1864,6 +2347,7 @@ internal class CppTypeTranslator(
                 "OnUndeliveredElement" to KnownCoroutineType("kotlinx/coroutines/internal/OnUndeliveredElement.hpp", NS_INTERNAL, templateArity = 1),
                 "ThreadSafeHeap" to KnownCoroutineType("kotlinx/coroutines/internal/ThreadSafeHeap.hpp", NS_INTERNAL, templateArity = 1),
                 "ThreadSafeHeapNode" to KnownCoroutineType("kotlinx/coroutines/internal/ThreadSafeHeap.hpp", NS_INTERNAL),
+                "InlineList" to KnownCoroutineType("kotlinx/coroutines/internal/InlineList.hpp", NS_INTERNAL, templateArity = 1),
                 "CoroutineStackFrame" to KnownCoroutineType("kotlinx/coroutines/internal/StackTraceRecovery.common.hpp", NS_INTERNAL),
                 "ScopeCoroutine" to
                     KnownCoroutineType(
@@ -1887,6 +2371,13 @@ internal class CppTypeTranslator(
                             ),
                     ),
                 "LimitedDispatcher" to KnownCoroutineType("kotlinx/coroutines/internal/LimitedDispatcher.hpp", NS_INTERNAL),
+                "NamedDispatcher" to KnownCoroutineType("kotlinx/coroutines/internal/NamedDispatcher.hpp", NS_INTERNAL),
+                "OnDemandAllocatingPool" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/internal/OnDemandAllocatingPool.hpp",
+                        namespaceSegments = NS_INTERNAL,
+                        templateArity = 1,
+                    ),
                 "DiagnosticCoroutineContextException" to KnownCoroutineType("kotlinx/coroutines/internal/CoroutineExceptionHandlerImpl.common.hpp", NS_INTERNAL),
                 "ExceptionSuccessfullyProcessed" to KnownCoroutineType("kotlinx/coroutines/internal/CoroutineExceptionHandlerImpl.common.hpp", NS_INTERNAL),
                 "SelectImplementation" to
@@ -1897,7 +2388,13 @@ internal class CppTypeTranslator(
                         forwardDecl = "template <typename R>\nclass SelectImplementation;",
                         skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
                     ),
-                "TrySelectDetailedResult" to KnownCoroutineType("kotlinx/coroutines/selects/Select.hpp", NS_SELECTS),
+                "TrySelectDetailedResult" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        forwardDecl = "enum class TrySelectDetailedResult;",
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
                 "SelectClause0" to
                     KnownCoroutineType(
                         headerPath = "kotlinx/coroutines/selects/Select.hpp",
@@ -1940,7 +2437,55 @@ internal class CppTypeTranslator(
                         forwardDecl = "template <typename R>\nclass SelectBuilder;",
                         skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
                     ),
-                "OnCancellationConstructor" to KnownCoroutineType("kotlinx/coroutines/selects/Select.hpp", NS_SELECTS),
+                "SelectClause0Impl" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        forwardDecl = "class SelectClause0Impl;",
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "SelectClause1Impl" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        templateArity = 1,
+                        forwardDecl = "template <typename Q>\nclass SelectClause1Impl;",
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "SelectClause2Impl" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        templateArity = 2,
+                        forwardDecl = "template <typename P, typename Q>\nclass SelectClause2Impl;",
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "SelectInstanceInternal" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        templateArity = 1,
+                        forwardDecl = "template <typename R>\nclass SelectInstanceInternal;",
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "OnCancellationConstructor" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "RegistrationFunction" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
+                "ProcessResultFunction" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/selects/Select.hpp",
+                        namespaceSegments = NS_SELECTS,
+                        skipIncludeFromHeaders = SELECT_REVERSE_CYCLE_HEADERS,
+                    ),
                 "Channel" to
                     KnownCoroutineType(
                         headerPath = "kotlinx/coroutines/channels/Channel.hpp",
@@ -1977,6 +2522,8 @@ internal class CppTypeTranslator(
                         forwardDecl = "template <typename E>\nclass ChannelIterator;",
                     ),
                 "BroadcastChannel" to KnownCoroutineType("kotlinx/coroutines/channels/BroadcastChannel.hpp", NS_CHANNELS, templateArity = 1),
+                "BroadcastCoroutine" to KnownCoroutineType("kotlinx/coroutines/channels/Broadcast.hpp", NS_CHANNELS, templateArity = 1),
+                "LazyBroadcastCoroutine" to KnownCoroutineType("kotlinx/coroutines/channels/Broadcast.hpp", NS_CHANNELS, templateArity = 1),
                 "BufferOverflow" to KnownCoroutineType("kotlinx/coroutines/channels/BufferOverflow.hpp", NS_CHANNELS),
                 "ProducerScope" to KnownCoroutineType("kotlinx/coroutines/channels/Produce.hpp", NS_CHANNELS, templateArity = 1),
                 "FlowCollector" to KnownCoroutineType("kotlinx/coroutines/flow/FlowCollector.hpp", NS_FLOW, templateArity = 1),
@@ -2053,13 +2600,57 @@ internal class CppTypeTranslator(
                 "ClosedSendChannelException" to KnownCoroutineType("kotlinx/coroutines/channels/Channel.hpp", NS_CHANNELS),
                 "ClosedReceiveChannelException" to KnownCoroutineType("kotlinx/coroutines/channels/Channel.hpp", NS_CHANNELS),
                 "ChannelCoroutine" to KnownCoroutineType("kotlinx/coroutines/channels/ChannelCoroutine.hpp", NS_CHANNELS, templateArity = 1),
-                "SharingStarted" to KnownCoroutineType("kotlinx/coroutines/flow/SharingStarted.hpp", NS_FLOW),
-                "SharingCommand" to KnownCoroutineType("kotlinx/coroutines/flow/SharingStarted.hpp", NS_FLOW),
+                "SharingStarted" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/flow/SharingStarted.hpp",
+                        namespaceSegments = NS_FLOW,
+                        forwardDecl = "class SharingStarted;",
+                    ),
+                "SharingCommand" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/flow/SharingStarted.hpp",
+                        namespaceSegments = NS_FLOW,
+                        forwardDecl = "enum class SharingCommand;",
+                    ),
+                "Worker" to
+                    KnownCoroutineType(
+                        headerPath = "kotlin/native/concurrent/Worker.hpp",
+                        namespaceSegments = listOf("kotlin", "native", "concurrent"),
+                    ),
+                "TransferMode" to
+                    KnownCoroutineType(
+                        headerPath = "kotlin/native/concurrent/Worker.hpp",
+                        namespaceSegments = listOf("kotlin", "native", "concurrent"),
+                    ),
+                "SubscribedFlowCollector" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/flow/Share.hpp",
+                        namespaceSegments = NS_FLOW,
+                        templateArity = 1,
+                        forwardDecl = "template <typename T>\nclass SubscribedFlowCollector;",
+                        skipIncludeFromHeaders =
+                            setOf(
+                                "kotlinx/coroutines/flow/SharedFlow.hpp",
+                                "kotlinx/coroutines/flow/StateFlow.hpp",
+                            ),
+                    ),
+                "SendingCollector" to KnownCoroutineType("kotlinx/coroutines/flow/internal/SendingCollector.hpp", NS_FLOW_INTERNAL, templateArity = 1),
+                "NopCollector" to KnownCoroutineType("kotlinx/coroutines/flow/internal/NopCollector.hpp", NS_FLOW_INTERNAL),
+                "Duration" to KnownCoroutineType("kotlin/time/Duration.hpp", listOf("kotlin", "time")),
+                "DurationUnit" to KnownCoroutineType("kotlin/time/Duration.hpp", listOf("kotlin", "time")),
+                "TimeSource" to KnownCoroutineType("kotlin/time/TimeSource.hpp", listOf("kotlin", "time")),
+                "AbstractLongTimeSource" to KnownCoroutineType("kotlin/time/TimeSource.hpp", listOf("kotlin", "time")),
                 "AbstractSharedFlow" to KnownCoroutineType("kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp", NS_FLOW_INTERNAL, templateArity = 1),
                 "AbstractSharedFlowSlot" to KnownCoroutineType("kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp", NS_FLOW_INTERNAL, templateArity = 1),
                 "SubscriptionCountStateFlow" to KnownCoroutineType("kotlinx/coroutines/flow/internal/AbstractSharedFlow.hpp", NS_FLOW_INTERNAL),
                 "ChannelFlow" to KnownCoroutineType("kotlinx/coroutines/flow/internal/ChannelFlow.hpp", NS_FLOW_INTERNAL, templateArity = 1),
                 "ChannelFlowOperator" to KnownCoroutineType("kotlinx/coroutines/flow/internal/ChannelFlow.hpp", NS_FLOW_INTERNAL, templateArity = 2),
+                "ChannelFlowOperatorImpl" to
+                    KnownCoroutineType(
+                        "kotlinx/coroutines/flow/internal/ChannelFlow.hpp",
+                        NS_FLOW_INTERNAL,
+                        templateArity = 1,
+                    ),
                 "FusibleFlow" to KnownCoroutineType("kotlinx/coroutines/flow/internal/ChannelFlow.hpp", NS_FLOW_INTERNAL, templateArity = 1),
                 "SafeCollector" to
                     KnownCoroutineType(
@@ -2080,6 +2671,11 @@ internal class CppTypeTranslator(
                         forwardDecl = "class TestDispatcher;",
                     ),
                 "TestResult" to KnownCoroutineType("kotlinx/coroutines/test/TestBuilders.common.hpp", NS_TEST),
+                "ReportingSupervisorJob" to
+                    KnownCoroutineType(
+                        headerPath = "kotlinx/coroutines/test/internal/ReportingSupervisorJob.hpp",
+                        namespaceSegments = listOf("kotlinx", "coroutines", "test", "internal"),
+                    ),
             )
     }
 }

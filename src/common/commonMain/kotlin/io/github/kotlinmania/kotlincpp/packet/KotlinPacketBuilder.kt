@@ -1369,7 +1369,84 @@ private class KotlinFrameTreeBuilder(
                 ?: return null
         val opRef = FrameDraft(KtNodeTypes.OPERATION_REFERENCE_ID, opBounds.first, opBounds.second)
         val rhsDraft = buildExpression(ctx.expression()) ?: return null
-        return FrameDraft(KtNodeTypes.BINARY_EXPRESSION_ID, b.first, b.second, listOf(lhsDraft, opRef, rhsDraft))
+        return reassociateUnparenthesizedLeadingIfAssignment(lhsDraft, opRef, rhsDraft, b.second)
+            ?: FrameDraft(KtNodeTypes.BINARY_EXPRESSION_ID, b.first, b.second, listOf(lhsDraft, opRef, rhsDraft))
+    }
+
+    private fun reassociateUnparenthesizedLeadingIfAssignment(
+        lhsDraft: FrameDraft,
+        opRef: FrameDraft,
+        rhsDraft: FrameDraft,
+        fullEndPacket: Int,
+    ): FrameDraft? {
+        val spine = ArrayList<FrameDraft>()
+        var cur = lhsDraft
+        while (cur.nodeTypeId != KtNodeTypes.IF_ID) {
+            when (cur.nodeTypeId) {
+                KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID,
+                KtNodeTypes.SAFE_ACCESS_EXPRESSION_ID,
+                KtNodeTypes.ARRAY_ACCESS_EXPRESSION_ID,
+                KtNodeTypes.POSTFIX_EXPRESSION_ID,
+                -> {
+                    val head = cur.children.firstOrNull() ?: return null
+                    spine.add(cur)
+                    cur = head
+                }
+                else -> return null
+            }
+        }
+        if (spine.isEmpty()) return null
+        val lastBranch =
+            cur.children.lastOrNull {
+                it.nodeTypeId == KtNodeTypes.ELSE_ID || it.nodeTypeId == KtNodeTypes.THEN_ID
+            } ?: return null
+        val branchBody = lastBranch.children.singleOrNull() ?: return null
+        if (branchBody.nodeTypeId == KtNodeTypes.BLOCK_ID) return null
+
+        var reattached = branchBody
+        for (i in spine.indices.reversed()) {
+            val wrapper = spine[i]
+            val newChildren = ArrayList<FrameDraft>(wrapper.children.size)
+            newChildren.add(reattached)
+            for (j in 1 until wrapper.children.size) {
+                newChildren.add(wrapper.children[j])
+            }
+            reattached =
+                FrameDraft(
+                    nodeTypeId = wrapper.nodeTypeId,
+                    firstPacketIndex = reattached.firstPacketIndex,
+                    lastPacketIndex = maxOf(reattached.lastPacketIndex, wrapper.lastPacketIndex),
+                    children = newChildren,
+                    flags = wrapper.flags,
+                    semanticInfo = wrapper.semanticInfo,
+                )
+        }
+        val innerAssign =
+            reassociateUnparenthesizedLeadingIfAssignment(reattached, opRef, rhsDraft, fullEndPacket)
+                ?: FrameDraft(
+                    nodeTypeId = KtNodeTypes.BINARY_EXPRESSION_ID,
+                    firstPacketIndex = reattached.firstPacketIndex,
+                    lastPacketIndex = fullEndPacket,
+                    children = listOf(reattached, opRef, rhsDraft),
+                )
+        val updatedBranch =
+            FrameDraft(
+                nodeTypeId = lastBranch.nodeTypeId,
+                firstPacketIndex = minOf(lastBranch.firstPacketIndex, innerAssign.firstPacketIndex),
+                lastPacketIndex = maxOf(lastBranch.lastPacketIndex, innerAssign.lastPacketIndex),
+                children = listOf(innerAssign),
+                flags = lastBranch.flags,
+                semanticInfo = lastBranch.semanticInfo,
+            )
+        val updatedIfChildren = cur.children.map { if (it === lastBranch) updatedBranch else it }
+        return FrameDraft(
+            nodeTypeId = cur.nodeTypeId,
+            firstPacketIndex = cur.firstPacketIndex,
+            lastPacketIndex = maxOf(cur.lastPacketIndex, updatedBranch.lastPacketIndex),
+            children = updatedIfChildren,
+            flags = cur.flags,
+            semanticInfo = cur.semanticInfo,
+        )
     }
 
     private fun buildDirectlyAssignableExpression(ctx: KotlinParser.DirectlyAssignableExpressionContext): FrameDraft? {

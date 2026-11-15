@@ -114,6 +114,7 @@ internal class SameFileSymbolTable(
     val portLintSourcePath: String?,
     val imports: List<KtImportInfo>,
     val importAliases: Map<String, String>,
+    val importedCompanionMembers: Map<String, String> = emptyMap(),
     val topLevelDeclarationFrames: List<PacketFrame>,
     val classesByFrame: Map<Int, KtClassSymbol>,
     val classesByName: Map<String, KtClassSymbol>,
@@ -124,8 +125,11 @@ internal class SameFileSymbolTable(
     val typeAliasesByFrame: Map<Int, KtTypeAliasSymbol>,
     val polymorphicTypeNames: Set<String>,
     val sharedHierarchyTypeNames: Set<String>,
+    val sharedPtrTypeAliases: Set<String>,
     val restrictsSuspensionTypeNames: Set<String>,
     val forwardDeclaredClassFrames: List<Int>,
+    val nonInnerNestedRewrites: Map<Pair<String, String>, String> = emptyMap(),
+    val uniqueNonInnerNestedCppNames: Map<String, String> = emptyMap(),
 ) {
     val hasCppSourceImplementations: Boolean
         get() =
@@ -145,6 +149,18 @@ internal class SameFileSymbolTable(
  * `#include`, and `.hpp`/`.cpp` co-location resolution over [PacketStream].
  */
 internal object SameFileSymbolPass {
+    private fun isVerbatimCSymbol(name: String): Boolean =
+        name == "COROUTINE_SUSPENDED" ||
+            name.startsWith("CF") ||
+            name.startsWith("kCF") ||
+            name.startsWith("CFAbsolute") ||
+            name.startsWith("dispatch_") ||
+            name.startsWith("DISPATCH_") ||
+            name.startsWith("pthread_") ||
+            name.startsWith("PTHREAD_") ||
+            name.startsWith("mach_") ||
+            name.startsWith("objc_")
+
     fun run(
         stream: PacketStream,
         config: CppTargetConfig,
@@ -215,6 +231,7 @@ internal object SameFileSymbolPass {
 
         val imports = ArrayList<KtImportInfo>()
         val importAliases = LinkedHashMap<String, String>()
+        val importedCompanionMembers = LinkedHashMap<String, String>()
         val importListFrame = FrameAstHelpers.firstChildFrame(stream, root, KtNodeTypes.IMPORT_LIST_ID)
         if (importListFrame != null) {
             for (imp in FrameAstHelpers.childFramesOfType(stream, importListFrame, KtNodeTypes.IMPORT_DIRECTIVE_ID)) {
@@ -223,6 +240,38 @@ internal object SameFileSymbolPass {
                     imports.add(parsedImport)
                     if (parsedImport.alias != null) {
                         importAliases[parsedImport.alias] = parsedImport.fqName.substringAfterLast('.')
+                    }
+                    if (!parsedImport.isWildcard) {
+                        val impParts = parsedImport.fqName.split('.')
+                        val isAllCapsConst: (String) -> Boolean = { name ->
+                            name.any { it.isLetter() } && name.all { it.isUpperCase() || it == '_' || it.isDigit() }
+                        }
+                        if (impParts.size >= 3 && impParts[impParts.size - 2] in setOf("Companion", "Factory")) {
+                            val ownerCls = impParts[impParts.size - 3]
+                            val memberName = impParts.last()
+                            if (ownerCls.firstOrNull()?.isUpperCase() == true &&
+                                (memberName.firstOrNull()?.isLowerCase() == true || isAllCapsConst(memberName))
+                            ) {
+                                importedCompanionMembers[parsedImport.alias ?: memberName] = ownerCls
+                            }
+                        } else if (impParts.size >= 2) {
+                            val ownerCls = impParts[impParts.size - 2]
+                            val memberName = impParts.last()
+                            if (ownerCls.firstOrNull()?.isUpperCase() == true &&
+                                !isAllCapsConst(ownerCls) &&
+                                isAllCapsConst(memberName)
+                            ) {
+                                importedCompanionMembers[parsedImport.alias ?: memberName] = ownerCls
+                            }
+                        }
+                    } else {
+                        val wildcardOwner = parsedImport.fqName.substringAfterLast('.')
+                        val knownEnumEntries = WILDCARD_IMPORTED_ENUM_ENTRIES[wildcardOwner]
+                        if (knownEnumEntries != null) {
+                            for (entry in knownEnumEntries) {
+                                importedCompanionMembers[entry] = wildcardOwner
+                            }
+                        }
                     }
                 }
             }
@@ -246,6 +295,7 @@ internal object SameFileSymbolPass {
                     collectClassOrObjectRecursive(
                         stream = stream,
                         declFrame = child,
+                        fileStem = fileStem,
                         enclosingClassFrameIndex = null,
                         enclosingHasTypeParams = false,
                         classesByFrame = classesByFrame,
@@ -270,13 +320,26 @@ internal object SameFileSymbolPass {
                 }
                 KtNodeTypes.PROPERTY_ID -> {
                     topLevelDeclFrames.add(child)
-                    val sym =
+                    val rawSym =
                         buildPropertySymbol(
                             stream = stream,
                             propFrame = child,
                             enclosingClass = null,
                             enclosingHasTypeParams = false,
                         )
+                    val isPrivateTopLevel = PacketFlags.hasFlag(child.flags, PacketFlags.MOD_PRIVATE)
+                    val sym =
+                        if (isPrivateTopLevel &&
+                            !isVerbatimCSymbol(rawSym.kotlinName) &&
+                            !rawSym.cppName.startsWith("kxs_priv_")
+                        ) {
+                            val sanitizedStem = CppNamingPolicy.toSnakeCase(fileStem.replace('.', '_')).trimStart('_')
+                            val prefixedCppName = "kxs_priv_${sanitizedStem}_${rawSym.cppName.trimStart('_')}"
+                            FrameAstHelpers.directIdentPacket(stream, child)?.targetCppName = prefixedCppName
+                            rawSym.copy(cppName = prefixedCppName)
+                        } else {
+                            rawSym
+                        }
                     propertiesByFrame[child.frameIndex] = sym
                     propertiesByName[sym.kotlinName] = sym
                 }
@@ -341,6 +404,114 @@ internal object SameFileSymbolPass {
             }
         }
 
+        val sharedPtrTypeAliases = LinkedHashSet<String>()
+        var aliasChanged = true
+        while (aliasChanged) {
+            aliasChanged = false
+            for (alias in typeAliasesByFrame.values) {
+                val targetIdx = alias.underlyingTypeFrameIndex ?: continue
+                val targetFrame = stream.frames[targetIdx]
+                val unwrapped =
+                    if (targetFrame.nodeTypeId == KtNodeTypes.NULLABLE_TYPE_ID) {
+                        FrameAstHelpers
+                            .childFrames(stream, targetFrame)
+                            .firstOrNull { it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID }
+                            ?: targetFrame
+                    } else {
+                        targetFrame
+                    }
+                val baseSimple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, unwrapped)
+                val isSharedPtrAlias =
+                    unwrapped.nodeTypeId == KtNodeTypes.FUNCTION_TYPE_ID ||
+                        (
+                            baseSimple != null &&
+                                (
+                                    baseSimple in sharedPtrTypeAliases ||
+                                        baseSimple == "Any" ||
+                                        baseSimple in CppTypeTranslator.KOTLIN_STDLIB_EXCEPTION_CLASSES
+                                )
+                        )
+                if (isSharedPtrAlias) {
+                    if (sharedPtrTypeAliases.add(alias.kotlinName)) aliasChanged = true
+                    if (sharedPtrTypeAliases.add(alias.cppName)) aliasChanged = true
+                } else if (baseSimple != null && baseSimple in sharedHierarchyTypes) {
+                    if (sharedHierarchyTypes.add(alias.kotlinName)) aliasChanged = true
+                    if (sharedHierarchyTypes.add(alias.cppName)) aliasChanged = true
+                }
+            }
+        }
+
+        val nonInnerNestedRewrites = LinkedHashMap<Pair<String, String>, String>()
+        val nestedSimpleNameCounts = LinkedHashMap<String, Int>()
+        val hoistCandidates = ArrayList<Triple<KtClassSymbol, KtClassSymbol, String>>()
+        for (outer in classesByFrame.values) {
+            if (outer.enclosingClassFrameIndex != null || outer.typeParams.isEmpty()) continue
+            val outerTpNames = outer.typeParams.mapTo(HashSet()) { it.name }
+            val outerMemberNames =
+                buildSet {
+                    add(outer.kotlinName)
+                    outer.primaryConstructorParams.forEach { add(it.name) }
+                    outer.memberPropertyFrameIndices.forEach { pIdx ->
+                        propertiesByFrame[pIdx]?.kotlinName?.let { add(it) }
+                    }
+                    outer.memberFunctionFrameIndices.forEach { fIdx ->
+                        functionsByFrame[fIdx]?.kotlinName?.let { add(it) }
+                    }
+                }
+            for (nestedIdx in outer.memberClassFrameIndices) {
+                val nested = classesByFrame[nestedIdx] ?: continue
+                if (nested.isInner ||
+                    nested.kind == KtClassKind.COMPANION_OBJECT ||
+                    nested.kind == KtClassKind.ANNOTATION_CLASS ||
+                    nested.typeParams.isNotEmpty()
+                ) {
+                    continue
+                }
+                val ownParamAndMemberNames =
+                    buildSet {
+                        nested.primaryConstructorParams.forEach { add(it.name) }
+                        nested.memberPropertyFrameIndices.forEach { pIdx ->
+                            propertiesByFrame[pIdx]?.kotlinName?.let { add(it) }
+                        }
+                    }
+                val forbiddenIdents =
+                    (outerTpNames + (outerMemberNames - ownParamAndMemberNames))
+                val nestedFrame = stream.frames[nested.frameIndex]
+                var usesOuterScope = false
+                if (nestedFrame.firstPacketIndex <= nestedFrame.lastPacketIndex) {
+                    for (pIdx in nestedFrame.firstPacketIndex..nestedFrame.lastPacketIndex) {
+                        val pkt = stream.packets[pIdx]
+                        if (pkt is SyntaxPacket.IdentPacket && pkt.unescapedName in forbiddenIdents) {
+                            usesOuterScope = true
+                            break
+                        }
+                    }
+                }
+                if (!usesOuterScope) {
+                    val hoistedCpp = "${outer.cppName}_${nested.cppName}"
+                    nonInnerNestedRewrites[outer.kotlinName to nested.kotlinName] = hoistedCpp
+                    nestedSimpleNameCounts[nested.kotlinName] = (nestedSimpleNameCounts[nested.kotlinName] ?: 0) + 1
+                    hoistCandidates.add(Triple(outer, nested, hoistedCpp))
+                }
+            }
+        }
+        val uniqueNonInnerNestedCppNames = LinkedHashMap<String, String>()
+        for ((_, nested, hoistedCpp) in hoistCandidates) {
+            val isUniqueSimple =
+                nestedSimpleNameCounts[nested.kotlinName] == 1 &&
+                    classesByFrame.values.none { other ->
+                        other.frameIndex != nested.frameIndex && other.kotlinName == nested.kotlinName
+                    }
+            val updated = nested.copy(cppName = hoistedCpp)
+            classesByFrame[nested.frameIndex] = updated
+            if (classesByName[nested.kotlinName]?.frameIndex == nested.frameIndex) {
+                classesByName[nested.kotlinName] = updated
+            }
+            if (isUniqueSimple) {
+                uniqueNonInnerNestedCppNames[nested.kotlinName] = hoistedCpp
+            }
+        }
+
         val forwardDecls =
             detectForwardDeclarationsAndStampReferences(
                 stream = stream,
@@ -360,6 +531,7 @@ internal object SameFileSymbolPass {
             portLintSourcePath = portLintTarget,
             imports = imports,
             importAliases = importAliases,
+            importedCompanionMembers = importedCompanionMembers,
             topLevelDeclarationFrames = topLevelDeclFrames,
             classesByFrame = classesByFrame,
             classesByName = classesByName,
@@ -370,26 +542,26 @@ internal object SameFileSymbolPass {
             typeAliasesByFrame = typeAliasesByFrame,
             polymorphicTypeNames = polymorphicTypes,
             sharedHierarchyTypeNames = sharedHierarchyTypes,
+            sharedPtrTypeAliases = sharedPtrTypeAliases,
             restrictsSuspensionTypeNames = restrictsSuspensionTypes,
             forwardDeclaredClassFrames = forwardDecls,
+            nonInnerNestedRewrites = nonInnerNestedRewrites,
+            uniqueNonInnerNestedCppNames = uniqueNonInnerNestedCppNames,
         )
     }
 
-    private fun frameHasNonVoidPtrStarProjection(
+    private fun frameHasStarProjection(
         stream: PacketStream,
         frame: PacketFrame,
     ): Boolean {
         if (frame.nodeTypeId == KtNodeTypes.USER_TYPE_ID) {
-            val simple = FrameAstHelpers.extractPrimaryTypeSimpleName(stream, frame)
             val argList = FrameAstHelpers.firstChildFrame(stream, frame, KtNodeTypes.TYPE_ARGUMENT_LIST_ID)
             if (argList != null) {
                 for (proj in FrameAstHelpers.childFramesOfType(stream, argList, KtNodeTypes.TYPE_PROJECTION_ID)) {
                     val innerType = FrameAstHelpers.firstChildFrame(stream, proj, KtNodeTypes.TYPE_REFERENCE_ID)
                     if (innerType == null) {
-                        if (simple !in CppTypeTranslator.VOID_PTR_STAR_PROJECTION_TYPES) {
-                            return true
-                        }
-                    } else if (frameHasNonVoidPtrStarProjection(stream, innerType)) {
+                        return true
+                    } else if (frameHasStarProjection(stream, innerType)) {
                         return true
                     }
                 }
@@ -397,7 +569,7 @@ internal object SameFileSymbolPass {
             return false
         }
         for (child in FrameAstHelpers.childFrames(stream, frame)) {
-            if (frameHasNonVoidPtrStarProjection(stream, child)) return true
+            if (frameHasStarProjection(stream, child)) return true
         }
         return false
     }
@@ -596,10 +768,22 @@ internal object SameFileSymbolPass {
             "kotlinx.coroutines.ThreadContextElement",
             "kotlinx.coroutines.channels.ActorScope",
             -> return null to null
-            "kotlinx.coroutines.internal.resumeCancellableWith" -> return "kotlinx/coroutines/internal/DispatchedContinuation.hpp" to null
+            "kotlinx.coroutines.internal.resumeCancellableWith",
+            "kotlinx.coroutines.internal.safeDispatch",
+            "kotlinx.coroutines.internal.safeIsDispatchNeeded",
+            -> return "kotlinx/coroutines/internal/DispatchedContinuation.hpp" to null
+            "kotlinx.coroutines.DefaultDelay" -> return "kotlinx/coroutines/native/CoroutineContext.hpp" to null
+            "kotlinx.coroutines.NonDisposableHandle" -> return "kotlinx/coroutines/Job.hpp" to null
             "kotlinx.coroutines.internal.withCoroutineContext",
             "kotlinx.coroutines.internal.withContinuationContext",
+            "kotlinx.coroutines.newCoroutineContext",
+            "kotlinx.coroutines.internal.newCoroutineContext",
+            "kotlinx.coroutines.toDebugString",
             -> return "kotlinx/coroutines/CoroutineContext.common.hpp" to null
+            "kotlinx.coroutines.internal.probeCoroutineCreated",
+            "kotlinx.coroutines.internal.probeCoroutineResumed",
+            "kotlinx.coroutines.internal.probeCoroutineSuspended",
+            -> return "kotlinx/coroutines/internal/ProbesSupport.common.hpp" to null
             "kotlinx.coroutines.internal.threadContextElements" -> return "kotlinx/coroutines/internal/ThreadContext.common.hpp" to null
             "kotlinx.coroutines.internal.systemProp" -> return "kotlinx/coroutines/internal/SystemProps.common.hpp" to null
             "kotlinx.coroutines.internal.synchronized" -> return "kotlinx/coroutines/internal/Synchronized.common.hpp" to null
@@ -614,8 +798,10 @@ internal object SameFileSymbolPass {
             -> return "kotlinx/coroutines/internal/StackTraceRecovery.common.hpp" to null
             "kotlinx.coroutines.RESUME_TOKEN" -> return "kotlinx/coroutines/CancellableContinuationImpl.hpp" to null
             "kotlinx.coroutines.delay",
+            "kotlinx.coroutines.toDelayMillis",
             "kotlinx.coroutines.awaitCancellation",
             -> return "kotlinx/coroutines/Delay.hpp" to null
+            "kotlinx.coroutines.channels.produce" -> return "kotlinx/coroutines/channels/Produce.hpp" to null
             "kotlinx.coroutines.yield" -> return "kotlinx/coroutines/Yield.hpp" to null
             "kotlinx.coroutines.launch",
             "kotlinx.coroutines.async",
@@ -659,9 +845,9 @@ internal object SameFileSymbolPass {
             "kotlinx.coroutines.recoverResult",
             "kotlinx.coroutines.toState",
             -> return "kotlinx/coroutines/CompletionState.hpp" to null
+            "kotlinx.coroutines.RECOVER_STACK_TRACES" -> return "kotlinx/coroutines/Exceptions.hpp" to null
             "kotlinx.coroutines.DEBUG",
             "kotlinx.coroutines.ASSERTIONS_ENABLED",
-            "kotlinx.coroutines.RECOVER_STACK_TRACES",
             "kotlinx.coroutines.assert",
             "kotlinx.coroutines.hexAddress",
             "kotlinx.coroutines.classSimpleName",
@@ -703,6 +889,7 @@ internal object SameFileSymbolPass {
     private fun collectClassOrObjectRecursive(
         stream: PacketStream,
         declFrame: PacketFrame,
+        fileStem: String,
         enclosingClassFrameIndex: Int?,
         enclosingHasTypeParams: Boolean,
         classesByFrame: MutableMap<Int, KtClassSymbol>,
@@ -720,7 +907,21 @@ internal object SameFileSymbolPass {
         val kotlinName =
             identPkt?.unescapedName
                 ?: if (isCompanion) "Companion" else "AnonymousObject"
-        val cppName = CppNamingPolicy.toTypeName(kotlinName)
+        val rawCppName = CppNamingPolicy.toTypeName(kotlinName)
+        val isPrivateTopLevelClass =
+            enclosingClassFrameIndex == null &&
+                !isCompanion &&
+                PacketFlags.hasFlag(declFrame.flags, PacketFlags.MOD_PRIVATE)
+        val cppName =
+            if (isPrivateTopLevelClass &&
+                kotlinName in STDLIB_IMPORT_COLLIDING_CLASS_NAMES &&
+                !rawCppName.startsWith("KxsPriv")
+            ) {
+                val pascalStem = CppNamingPolicy.toTypeName(fileStem.replace('.', '_'))
+                "KxsPriv$pascalStem$rawCppName"
+            } else {
+                rawCppName
+            }
         if (identPkt != null) {
             identPkt.role = SymbolRole.TYPE
             identPkt.targetCppName = cppName
@@ -931,6 +1132,7 @@ internal object SameFileSymbolPass {
                         collectClassOrObjectRecursive(
                             stream = stream,
                             declFrame = member,
+                            fileStem = fileStem,
                             enclosingClassFrameIndex = declFrame.frameIndex,
                             enclosingHasTypeParams = hasTemplates,
                             classesByFrame = classesByFrame,
@@ -1073,11 +1275,12 @@ internal object SameFileSymbolPass {
         val hasStarProjectionTemplate =
             !isVirtualLike &&
                 cAbiSymbol == null &&
+                !PacketFlags.hasFlag(flags, PacketFlags.MOD_SUSPEND) &&
                 (
-                    (receiverFrame != null && frameHasNonVoidPtrStarProjection(stream, receiverFrame)) ||
+                    (receiverFrame != null && frameHasStarProjection(stream, receiverFrame)) ||
                         valueParams.any { vp ->
                             vp.typeFrameIndex != null &&
-                                frameHasNonVoidPtrStarProjection(stream, stream.frames[vp.typeFrameIndex])
+                                frameHasStarProjection(stream, stream.frames[vp.typeFrameIndex])
                         }
                 )
         val isTemplate = enclosingHasTypeParams || typeParams.isNotEmpty() || hasStarProjectionTemplate
@@ -1091,7 +1294,12 @@ internal object SameFileSymbolPass {
         flags =
             when {
                 isPureDeclaration -> flags
-                isTemplate || isInline || isNestedMemberClass || isRichEnumHelper || isValueOrDataClass ->
+                isTemplate ||
+                    isInline ||
+                    isNestedMemberClass ||
+                    isRichEnumHelper ||
+                    isValueOrDataClass ||
+                    (exprBody != null && returnFrame == null) ->
                     flags or PacketFlags.EMIT_IN_HPP_INLINE_BODY
                 else -> flags or PacketFlags.EMIT_IN_CPP_BODY
             }
@@ -1133,10 +1341,30 @@ internal object SameFileSymbolPass {
         val isConst = PacketFlags.hasFlag(propFrame.flags, PacketFlags.MOD_CONST)
         val isPrivate = PacketFlags.hasFlag(propFrame.flags, PacketFlags.MOD_PRIVATE)
         val isScreamingConst = !isVar && kotlinName.length > 1 && kotlinName.all { it.isUpperCase() || it.isDigit() || it == '_' }
+        val initFrame = FrameAstHelpers.extractInitializerAfterEquals(stream, propFrame)
+        val (receiverFrame, returnFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, propFrame)
+        val returnBaseSimple = returnFrame?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, it) }
+        val isExplicitAtomicType =
+            returnBaseSimple != null && returnBaseSimple in ATOMIC_PROPERTY_TYPE_NAMES
+        val isAtomicUnderscoreProp =
+            !isConst &&
+                kotlinName.startsWith('_') &&
+                (isAtomicCallInitializer(stream, initFrame) || (initFrame == null && isExplicitAtomicType))
 
         val (role, cppName) =
             when {
-                isConst || isScreamingConst -> SymbolRole.CONSTANT to CppNamingPolicy.toConstName(kotlinName)
+                isConst || (isScreamingConst && !isAtomicUnderscoreProp) ->
+                    SymbolRole.CONSTANT to CppNamingPolicy.toConstName(kotlinName)
+                isAtomicUnderscoreProp -> {
+                    val isPrivateField =
+                        enclosingClass != null &&
+                            isPrivate &&
+                            enclosingClass.kind != KtClassKind.OBJECT_SINGLETON &&
+                            enclosingClass.kind != KtClassKind.COMPANION_OBJECT
+                    val propRole = if (isPrivateField) SymbolRole.PRIVATE_FIELD else SymbolRole.PROPERTY
+                    val base = CppNamingPolicy.toPrivateFieldName(kotlinName).removeSuffix("_")
+                    propRole to "kxs_atomic_${base}_"
+                }
                 enclosingClass != null && isPrivate &&
                     enclosingClass.kind != KtClassKind.OBJECT_SINGLETON &&
                     enclosingClass.kind != KtClassKind.COMPANION_OBJECT ->
@@ -1155,8 +1383,6 @@ internal object SameFileSymbolPass {
                 pkt.targetCppName = tp.name
             }
         }
-        val (receiverFrame, returnFrame) = FrameAstHelpers.extractReceiverAndReturnTypeFrames(stream, propFrame)
-        val initFrame = FrameAstHelpers.extractInitializerAfterEquals(stream, propFrame)
         var getterIdx: Int? = null
         var setterIdx: Int? = null
         for (acc in FrameAstHelpers.childFramesOfType(stream, propFrame, KtNodeTypes.PROPERTY_ACCESSOR_ID)) {
@@ -1171,8 +1397,16 @@ internal object SameFileSymbolPass {
         if (receiverFrame != null) {
             flags = flags or PacketFlags.MOD_EXTERNAL_OR_EXTENSION
         }
+        val isInlineProp = PacketFlags.hasFlag(flags, PacketFlags.MOD_INLINE)
         flags =
-            if (enclosingHasTypeParams || typeParams.isNotEmpty() || isConst || enclosingClass != null || (getterIdx == null && setterIdx == null)) {
+            if (enclosingHasTypeParams ||
+                typeParams.isNotEmpty() ||
+                isConst ||
+                isInlineProp ||
+                enclosingClass != null ||
+                (getterIdx == null && setterIdx == null) ||
+                (returnFrame == null && getterIdx != null)
+            ) {
                 flags or PacketFlags.EMIT_IN_HPP_INLINE_BODY
             } else {
                 flags or PacketFlags.EMIT_IN_CPP_BODY
@@ -1197,6 +1431,28 @@ internal object SameFileSymbolPass {
             annotations = annotations,
             flags = flags,
         )
+    }
+
+    private fun isAtomicCallInitializer(
+        stream: PacketStream,
+        initFrame: PacketFrame?,
+    ): Boolean {
+        var cur = initFrame ?: return false
+        while (cur.nodeTypeId == KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID) {
+            val parts = FrameAstHelpers.childFrames(stream, cur)
+            if (parts.size != 2) return false
+            cur = parts[1]
+        }
+        if (cur.nodeTypeId != KtNodeTypes.CALL_EXPRESSION_ID) return false
+        val calleeRef = FrameAstHelpers.firstChildFrame(stream, cur, KtNodeTypes.REFERENCE_EXPRESSION_ID) ?: return false
+        val callee = FrameAstHelpers.directIdentPacket(stream, calleeRef)?.unescapedName ?: return false
+        return callee == "atomic" ||
+            callee == "atomicArrayOfNulls" ||
+            callee == "AtomicReference" ||
+            callee == "AtomicInt" ||
+            callee == "AtomicLong" ||
+            callee == "AtomicBoolean" ||
+            callee == "AtomicNativePtr"
     }
 
     private fun buildTypeAliasSymbol(
@@ -1253,7 +1509,11 @@ internal object SameFileSymbolPass {
                         val declFrame = stream.frames[sameFileClass.frameIndex]
                         if (pkt.packetIndex < declFrame.firstPacketIndex &&
                             sameFileClass.enclosingClassFrameIndex == null &&
-                            sameFileClass.kind != KtClassKind.ANNOTATION_CLASS
+                            sameFileClass.kind != KtClassKind.ANNOTATION_CLASS &&
+                            sameFileClass.kotlinName != "StackTraceElement" &&
+                            sameFileClass.kotlinName != "TestResult" &&
+                            sameFileClass.kotlinName !in CppTypeTranslator.KOTLIN_STDLIB_EXCEPTION_CLASSES &&
+                            !FrameAstHelpers.hasModifierKeyword(stream, declFrame, KtTokens.EXPECT_MODIFIER_ID)
                         ) {
                             declFrame.flags = declFrame.flags or PacketFlags.NEEDS_FORWARD_DECL
                             forwardNeeded.add(sameFileClass.frameIndex)
@@ -1285,9 +1545,13 @@ internal object SameFileSymbolPass {
                     }
                     else -> {
                         pkt.targetCppName =
-                            if (name.firstOrNull()?.isUpperCase() == true) {
+                            if (name == "DefaultDelay") {
+                                "default_delay"
+                            } else if (isVerbatimCSymbol(name)) {
+                                name
+                            } else if (name.firstOrNull()?.isUpperCase() == true) {
                                 if (name.length > 1 && name.all { it.isUpperCase() || it.isDigit() || it == '_' }) {
-                                    name
+                                    CppNamingPolicy.toConstName(name)
                                 } else {
                                     CppNamingPolicy.toTypeName(name)
                                 }
@@ -1300,6 +1564,16 @@ internal object SameFileSymbolPass {
         }
         return forwardNeeded.toList()
     }
+
+    private val ATOMIC_PROPERTY_TYPE_NAMES: Set<String> =
+        setOf(
+            "AtomicRef",
+            "AtomicReference",
+            "AtomicInt",
+            "AtomicLong",
+            "AtomicBoolean",
+            "AtomicNativePtr",
+        )
 
     private val PRESERVED_MULTIPLATFORM_SUFFIXES: List<String> =
         listOf(
@@ -1340,9 +1614,26 @@ internal object SameFileSymbolPass {
             "SelectInstance",
         )
 
+    private val STDLIB_IMPORT_COLLIDING_CLASS_NAMES: Set<String> =
+        setOf(
+            "CompletedContinuation",
+            "BaseContinuationImpl",
+            "ContinuationImpl",
+            "RestrictedContinuationImpl",
+        )
+
     private val KNOWN_RESTRICTS_SUSPENSION_TYPES: Set<String> =
         setOf(
             "SequenceScope",
             "DeepRecursiveScope",
+        )
+
+    private val WILDCARD_IMPORTED_ENUM_ENTRIES: Map<String, List<String>> =
+        mapOf(
+            "BufferOverflow" to listOf("SUSPEND", "DROP_OLDEST", "DROP_LATEST"),
+            "TrySelectDetailedResult" to listOf("SUCCESSFUL", "REREGISTER", "CANCELLED", "ALREADY_SELECTED"),
+            "CoroutineStart" to listOf("DEFAULT", "LAZY", "ATOMIC", "UNDISPATCHED"),
+            "SharingCommand" to listOf("START", "STOP", "STOP_AND_RESET_REPLAY_CACHE"),
+            "DurationUnit" to listOf("NANOSECONDS", "MICROSECONDS", "MILLISECONDS", "SECONDS", "MINUTES", "HOURS", "DAYS"),
         )
 }

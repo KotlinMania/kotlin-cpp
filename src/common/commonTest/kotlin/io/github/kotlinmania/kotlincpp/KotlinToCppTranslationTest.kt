@@ -141,18 +141,14 @@ class KotlinToCppTranslationTest {
         val hpp = result.headerArtifact.content
         val cpp = assertNotNull(result.sourceArtifact).content
 
-        assertTrue(hpp.contains("[[clang::annotate(\"suspend\")]]"))
-        assertTrue(hpp.contains("void* yield(std::shared_ptr<Continuation<void*>> completion);"))
         assertTrue(hpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"))
-        assertTrue(
-            hpp.contains(
-                "__attribute__((error(\"yield() requires suspend lowering; use yield(completion) at an explicit ABI boundary\")))",
-            ),
-        )
         assertTrue(hpp.contains("void yield();"))
+        assertTrue(hpp.contains("[[clang::annotate(\"suspend\")]]"))
+        assertTrue(hpp.contains("void* yield(std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion);"))
 
-        assertTrue(cpp.contains("void* yield(std::shared_ptr<Continuation<void*>> completion)"))
-        assertTrue(cpp.contains("return intrinsics::COROUTINE_SUSPENDED;"))
+        assertTrue(cpp.contains("[[clang::annotate(\"suspend\")]]"))
+        assertTrue(cpp.contains("void* yield([[maybe_unused]] std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion)"))
+        assertTrue(cpp.contains("return COROUTINE_SUSPENDED;"))
     }
 
     @Test
@@ -356,7 +352,7 @@ class KotlinToCppTranslationTest {
         val hpp = standalone.headerArtifact.content
         val cpp = assertNotNull(standalone.sourceArtifact).content
 
-        assertTrue(hpp.contains("mutable std::atomic<std::int32_t> state_{0};"))
+        assertTrue(hpp.contains("mutable KxsCopyableAtomic<std::int32_t> state_{0};"))
         assertTrue(hpp.contains("static inline ThreadLocal<CounterGate> slot{};"))
         assertTrue(cpp.contains("state_.store(1, std::memory_order_release)"))
         assertTrue(cpp.contains("(state_.fetch_add(1, std::memory_order_seq_cst) + 1)"))
@@ -586,7 +582,8 @@ class KotlinToCppTranslationTest {
         assertTrue(startHpp.contains("case CoroutineStart::LAZY:"))
         assertFalse(startHpp.contains("Unit;"))
         assertTrue(startHpp.contains("return (self == CoroutineStart::LAZY);"))
-        assertTrue(startHpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]"))
+        assertTrue(startHpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")"))
+        assertTrue(startHpp.contains("void* opaque_ptr(bool flag, std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion);"))
     }
 
     @Test
@@ -744,7 +741,7 @@ class KotlinToCppTranslationTest {
 
         assertTrue(hpp.contains("```cpp"))
         assertTrue(hpp.contains("class CountingListFlow"))
-        assertTrue(hpp.contains("if (!(poll_next())) {"))
+        assertTrue(hpp.contains("if (kxs_is_null(poll_next())) {"))
         assertTrue(hpp.contains("break;"))
         assertTrue(hpp.contains("return ((!state.has_value() || state.type() == typeid(std::nullptr_t)) ? T{} : std::any_cast<T>(state));"))
     }
@@ -767,7 +764,7 @@ class KotlinToCppTranslationTest {
         val yieldRes = translateKotlinToCpp(yieldSource, sourcePath = "Yield.kt")
         val yieldCpp = assertNotNull(yieldRes.sourceArtifact).content
         assertTrue(yieldCpp.contains("return nullptr;"))
-        assertTrue(yieldCpp.contains("return intrinsics::COROUTINE_SUSPENDED;"))
+        assertTrue(yieldCpp.contains("return COROUTINE_SUSPENDED;"))
         assertFalse(yieldCpp.contains("Transliterated from:"))
 
         val cehSource =
@@ -902,8 +899,8 @@ class KotlinToCppTranslationTest {
             )
         assertEquals("kotlinx/coroutines/selects/Select.native.hpp", selRes.headerArtifact.relativePath)
         val selCpp = assertNotNull(selRes.sourceArtifact).content
-        assertTrue(selCpp.contains("return TRY_SELECT_SUCCESSFUL;"))
-        assertTrue(selCpp.contains("this->internal_result_ = NO_RESULT;"))
+        assertTrue(selCpp.contains("return kxs_priv_select_native_TRY_SELECT_SUCCESSFUL;"))
+        assertTrue(selCpp.contains("this->internal_result_ = kxs_priv_select_native_NO_RESULT;"))
         assertTrue(selCpp.contains("continue;"))
         assertFalse(selCpp.contains("Transliterated from:"))
 
@@ -1055,9 +1052,9 @@ class KotlinToCppTranslationTest {
         assertTrue(hpp.contains("((void)0);"))
         assertTrue(hpp.contains("self->lock(owner);"))
         assertTrue(hpp.contains("self->unlock(owner);"))
-        assertTrue(hpp.contains("mutable std::atomic<void*> owner_{};"))
+        assertTrue(hpp.contains("mutable KxsAtomicReference<std::any> owner_"))
         assertTrue(hpp.contains("[[noreturn]] void await_forever();"))
-        assertTrue(cpp.contains("[[noreturn]] void await_forever()"))
+        assertTrue(cpp.contains("void* await_forever([[maybe_unused]] std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion)"))
         assertFalse(cpp.contains("todo:"))
         assertTrue(cpp.contains("Note: verify owner invariant"))
     }
@@ -1116,11 +1113,17 @@ class KotlinToCppTranslationTest {
 
         assertTrue(hpp.indexOf("class BaseTask") < hpp.indexOf("class DerivedTask"))
         assertTrue(cpp.contains("BaseTask::describe()"))
-        assertTrue(hpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]"))
-        assertTrue(hpp.contains("void* pause_briefly(std::string tag, std::int32_t unused_flag, std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion);"))
-        assertTrue(cpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_authored_suspend\")]]"))
+        assertTrue(hpp.contains("[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\")]]"))
+        assertTrue(hpp.contains("void pause_briefly(std::string tag, std::int32_t unused_flag);"))
+        assertTrue(
+            hpp.contains(
+                "void* pause_briefly(std::string tag, std::int32_t unused_flag, " +
+                    "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion);",
+            ),
+        )
+        assertTrue(cpp.contains("[[clang::annotate(\"suspend\")]]"))
         assertTrue(cpp.contains("[[maybe_unused]] std::int32_t unused_flag"))
-        assertTrue(cpp.contains("std::unreachable();"))
+        assertTrue(cpp.contains("return nullptr;"))
         assertTrue(cpp.contains("kotlin::coroutines::kxs_ctx_get(self, &ContinuationInterceptor::key_instance)"))
         assertTrue(cpp.contains("self.is_positive()"))
         assertTrue(cpp.contains("(self + kotlin::time::nanoseconds(static_cast<long long>(999999LL))).in_whole_milliseconds()"))
@@ -1129,5 +1132,915 @@ class KotlinToCppTranslationTest {
         assertTrue(cpp.contains("kxs_safe_as_cast<"))
         assertTrue(cpp.contains("kxs_as_cast<"))
         assertTrue(cpp.contains("kxs_elvis("))
+    }
+
+    @Test
+    fun emitsDualAbiSuspendBoxingIntrinsicsAndCpp23Fixes() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            import kotlin.coroutines.*
+            import kotlin.coroutines.intrinsics.*
+            import kotlinx.coroutines.*
+
+            public open class BaseChannelSuspender {
+                public open suspend fun nextValue(x: Int): Int = x + 1
+                public open suspend fun nextValue(tag: String): Int = 0
+            }
+
+            public class DerivedChannelSuspender(private val offset: Int) : BaseChannelSuspender() {
+                override suspend fun nextValue(x: Int): Int = x + offset
+
+                public suspend fun unitWithBranch(flag: Boolean, y: Int): Unit {
+                    when (flag) {
+                        true -> y
+                        false -> y + 1
+                    }
+                    if (y > 0) return
+                }
+
+                public suspend fun nonLeafUnintercepted(): Int {
+                    val seed = 7
+                    return suspendCoroutineUninterceptedOrReturn { uCont ->
+                        uCont.intercepted().resumeWith(Result.success(seed))
+                        COROUTINE_SUSPENDED
+                    }
+                }
+
+                public fun miscCpp23Checks(
+                    condA: Boolean,
+                    condB: Boolean,
+                    condC: Boolean,
+                    items: List<Int>,
+                    cap: Int,
+                ): Int {
+                    require(cap == Channel.CONFLATED || cap == Channel.Factory.BUFFERED) { "bad cap" }
+                    val ok = condA && condB || condC
+                    val msg = buildString {
+                        append("n=")
+                        append(items.size)
+                    }
+                    val copied = (this as BufferedChannel<Int>).onReceiveOrNull
+                    val sc = ScopeCoroutine(EmptyCoroutineContext, null)
+                    return if (ok && msg.length > 0 && copied != null && sc != null) items.size else 0
+                }
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "channels/DerivedChannelSuspender.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = assertNotNull(res.sourceArtifact).content
+
+        assertTrue(hpp.contains("using BaseChannelSuspender::next_value;"))
+        assertTrue(
+            hpp.contains(
+                "[[clang::annotate(\"suspend\"), clang::annotate(\"kxs_implicit_continuation\"), " +
+                    "clang::annotate(\"kxs_boxed_result\")]]",
+            ),
+        )
+        assertTrue(hpp.contains("std::int32_t next_value(std::int32_t x);"))
+        assertTrue(
+            hpp.contains(
+                "virtual void* next_value(std::int32_t x, " +
+                    "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion);",
+            ),
+        )
+        assertTrue(
+            hpp.contains(
+                "void* next_value(std::int32_t x, " +
+                    "std::shared_ptr<kotlin::coroutines::Continuation<void*>> _kxs_completion) override;",
+            ),
+        )
+
+        assertTrue(cpp.contains("kxs_box_suspend_result<std::int32_t>(x + offset_)"))
+        assertTrue(cpp.contains("return nullptr;"))
+        assertFalse(cpp.contains("switch (flag)"))
+        assertTrue(cpp.contains("if ((flag == true))"))
+        assertTrue(cpp.contains("kxs_suspend_coroutine_unintercepted_or_return("))
+        assertTrue(cpp.contains("kxs_intercepted(u_cont)->resume_with("))
+        assertTrue(cpp.contains("Channel<void*>::CONFLATED"))
+        assertTrue(cpp.contains("Channel<void*>::BUFFERED"))
+        assertTrue(cpp.contains("([&]() { return std::string(\"bad cap\"); })()"))
+        assertTrue(cpp.contains("(cond_a && cond_b) || cond_c"))
+        assertTrue(cpp.contains("static_cast<std::int32_t>(items.size())"))
+        assertTrue(cpp.contains("static_cast<std::int32_t>(msg.size())"))
+        assertTrue(cpp.contains("->on_receive_or_null()"))
+        assertTrue(cpp.contains("std::shared_ptr(new kotlinx::coroutines::internal::ScopeCoroutine("))
+    }
+
+    @Test
+    fun emitsAtomicAnyRefImplicitExtensionVarargValueClassComparableAndStarProjectionFixes() {
+        val source =
+            """
+            package kotlinx.coroutines.internal
+
+            import kotlinx.atomicfu.*
+            import kotlin.coroutines.*
+
+            internal inline fun AtomicInt.bumpUnless(target: Int, action: (Int) -> Unit): Boolean {
+                loop { cur ->
+                    if (cur == target) return false
+                    if (compareAndSet(cur, cur + 1)) {
+                        action(cur)
+                        return true
+                    }
+                }
+            }
+
+            internal value class TicketId private constructor(private val holder: Any?) {
+                val rawValue: Int get() = 42
+                fun isEmpty(): Boolean = holder == null
+                companion object {
+                    const val DEFAULT_TAG: String = "ticket"
+                    fun of(value: Any?): TicketId = TicketId(value)
+                }
+                object Sentinel {
+                    const val CODE: Int = 7
+                }
+            }
+
+            internal open class BaseBox<T>(protected val count: Int) {
+                fun readCount(): Int = count
+            }
+
+            internal class DerivedBox<T>(
+                count: Int,
+                val orderKey: Long,
+            ) : BaseBox<T>(count), Comparable<DerivedBox<*>> {
+                private val owner = atomic<Any?>(null)
+                private val state = atomic(0)
+
+                fun tryLock(token: Any?): Boolean = owner.compareAndSet(null, token)
+                fun bump(): Boolean = state.bumpUnless(1) { _ -> }
+                fun readBaseCount(): Int = count
+                override fun compareTo(other: DerivedBox<*>): Int =
+                    compareValuesBy(this, other, DerivedBox<*>::readBaseCount, DerivedBox<*>::orderKey)
+            }
+
+            internal abstract class ContHolder(override val context: CoroutineContext) : Continuation<Int> {
+                fun currentContext(): CoroutineContext = context
+                override fun resumeWith(result: Result<Int>) {}
+            }
+
+            internal fun acceptAll(vararg items: Int): Int = items.size
+            internal inline fun inspectCont(cont: Continuation<*>): CoroutineContext = cont.context
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "internal/AdvancedCoverage.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = assertNotNull(res.sourceArtifact).content
+
+        assertTrue(hpp.contains("using namespace kotlinx::coroutines;"))
+        assertTrue(hpp.contains("class KxsAtomicReference"))
+        assertTrue(hpp.contains("mutable KxsAtomicReference<std::any> owner_{};"))
+        assertTrue(hpp.contains("mutable KxsCopyableAtomic<std::int32_t> state_{0};"))
+        assertTrue(hpp.contains("class KxsVararg"))
+        assertTrue(hpp.contains("std::int32_t accept_all(const KxsVararg<std::int32_t>& items);"))
+        assertFalse(hpp.contains("std::initializer_list<std::int32_t> items"))
+        assertTrue(hpp.contains("class TicketId"))
+        assertTrue(hpp.contains("static inline const std::string DEFAULT_TAG"))
+        assertTrue(hpp.contains("class Sentinel"))
+        assertTrue(hpp.contains("bool is_empty() const"))
+        assertTrue(hpp.contains("return holder_ == nullptr;"))
+        assertTrue(hpp.contains("std::int32_t raw_value() const"))
+        assertTrue(hpp.contains("int compare_to(const DerivedBox<std::any>& other) const override"))
+        assertTrue(hpp.contains("auto operator<=>(const DerivedBox<std::any>& other) const"))
+        assertTrue(hpp.contains("std::int32_t read_base_count() const"))
+        assertTrue(hpp.contains("return this->count;"))
+        assertTrue(hpp.contains("std::shared_ptr<CoroutineContext> current_context();"))
+        assertTrue(cpp.contains("return context_;"))
+        assertTrue(hpp.contains("template <typename KxsStar0>"))
+        assertTrue(hpp.contains("inspect_cont(std::shared_ptr<Continuation<KxsStar0>> cont)"))
+        assertTrue(hpp.contains("compare_exchange_strong("))
+        assertTrue(hpp.contains("std::invoke"))
+    }
+
+    @Test
+    fun coroutineFlowSynchronizedOverridesAndAccessorsTranslateCleanly() {
+        val source =
+            """
+            package kotlinx.coroutines.flow
+
+            import kotlin.coroutines.*
+            import kotlinx.atomicfu.*
+            import kotlinx.coroutines.*
+            import kotlinx.coroutines.flow.internal.*
+
+            public class SharedFlowSlot : AbstractSharedFlowSlot<SharedFlowImpl<*>>() {
+                override fun allocateLocked(flow: SharedFlowImpl<*>): Boolean = true
+                override fun freeLocked(flow: SharedFlowImpl<*>): Array<Continuation<Unit>?> = emptyArray()
+            }
+
+            public class SharedFlowImpl<T> : AbstractSharedFlow<SharedFlowSlot>(), MutableSharedFlow<T> {
+                private val idx = atomic(0)
+                public var cachedSize: Int = 0
+                    private set
+
+                override val replayCache: List<T> get() = emptyList()
+                override suspend fun collect(collector: FlowCollector<T>): Nothing {
+                    throw CancellationException("done")
+                }
+                override fun tryEmit(value: T): Boolean = true
+                override suspend fun emit(value: T) {}
+                override fun createSlot() = SharedFlowSlot()
+                override fun createSlotArray(size: Int) = arrayOfNulls(size)
+                override fun resetReplayCache() = synchronized(this) {
+                    idx.incrementAndGet()
+                    cachedSize = 0
+                }
+                override fun toString(): String = "${'$'}{this::classSimpleName}@1"
+            }
+
+            public class MyElement : AbstractCoroutineContextElement(MyElement) {
+                public companion object Key : CoroutineContext.Key<MyElement>
+                public val altKey: CoroutineContext.Key<*> get() = Key
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "flow/SharedFlowCheck.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = assertNotNull(res.sourceArtifact).content
+
+        assertTrue(hpp.contains("std::int32_t cached_size"))
+        assertTrue(hpp.contains("std::shared_ptr<SharedFlowSlot> create_slot() override"))
+        assertTrue(hpp.contains("std::vector<std::shared_ptr<SharedFlowSlot>> create_slot_array(std::int32_t size) override"))
+        assertTrue(hpp.contains("void reset_replay_cache() override"))
+        assertTrue(cpp.contains("-> std::recursive_mutex&") || hpp.contains("-> std::recursive_mutex&"))
+        assertTrue(hpp.contains("fetch_add(1, std::memory_order_seq_cst) + 1)"))
+        assertTrue(cpp.contains("class_simple_name(") || hpp.contains("class_simple_name("))
+        assertTrue(hpp.contains("std::addressof(MyElement::Key::instance())") || cpp.contains("std::addressof(MyElement::Key::instance())"))
+    }
+
+    @Test
+    fun testChannelResultValueClassInlineLambdaAndSegmentOrClosed() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            import kotlinx.coroutines.channels.ChannelResult.Companion.failure
+            import kotlinx.coroutines.channels.ChannelResult.Companion.success
+            import kotlin.jvm.JvmInline
+
+            public class ClosedCause(public val cause: Throwable?) {
+                override fun hashCode(): Int = cause.hashCode()
+            }
+
+            @JvmInline
+            public value class ChannelResult<out T>(public val holder: Any?) {
+                public fun getOrNull(): T? = holder as? T
+                public companion object {
+                    public fun <E> success(value: E): ChannelResult<E> = ChannelResult(value)
+                    public fun <E> failure(exception: Throwable?): ChannelResult<E> =
+                        ChannelResult(ClosedCause(exception))
+                }
+            }
+
+            public inline fun <T> ChannelResult<T>.onSuccess(action: (value: T) -> Unit): ChannelResult<T> {
+                val v = holder as? T
+                if (v != null) action(v)
+                return this
+            }
+
+            @JvmInline
+            public value class SegmentOrClosed<S>(private val value: Any?) {
+                public val segment: S get() = value as S
+            }
+
+            public fun <S> wrapSegment(seg: S): SegmentOrClosed<S> = SegmentOrClosed(seg)
+
+            public fun testChannelResultOps(res: ChannelResult<Int>, err: Throwable?): ChannelResult<Int> {
+                val handled = res.onSuccess { _ -> }
+                if (err != null) return failure(err)
+                return handled
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "channels/ChannelResultCheck.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = assertNotNull(res.sourceArtifact).content
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(hpp.contains("class ChannelResult"))
+        assertTrue(hpp.contains("holder()"))
+        assertTrue(combined.contains("std::is_same_v<KxsH, std::exception_ptr>"))
+        assertTrue(combined.contains("ChannelResult<std::int32_t>::failure(") || combined.contains("ChannelResult<void*>::failure("))
+        assertTrue(combined.contains("SegmentOrClosed<S>("))
+        assertTrue(!combined.contains("ChannelResult<T> handled{};"))
+        assertTrue(combined.contains("[[maybe_unused]]"))
+    }
+
+    @Test
+    fun testConcurrentLinkedListNodeSmartCastsSuperGettersAndBracelessIf() {
+        val source =
+            """
+            package kotlinx.coroutines.internal
+
+            import kotlinx.atomicfu.atomic
+
+            public class ClosedNode(public val reason: Int)
+
+            public abstract class ConcurrentLinkedListNode<N : ConcurrentLinkedListNode<N>>(prev: N?) {
+                public val _next = atomic<Any?>(null)
+                private val _prev = atomic(prev)
+                public val next: N? get() = _next.value as? N
+                public val prev: N? get() = _prev.value
+                public val isTail: Boolean get() = next == null
+                public open val isRemoved: Boolean get() = next != null && !isTail
+
+                public fun unlink() {
+                    val prev = prev
+                    val next = next
+                    if (prev != null) prev._next.value = next
+                }
+
+                public fun inspectNode(cur: Any): Boolean {
+                    val isValidClosed = cur is ClosedNode && cur.reason > 0
+                    val isBad = cur !is ClosedNode || cur.reason == 0
+                    return isValidClosed && !isBad
+                }
+            }
+
+            public abstract class Segment<S : Segment<S>>(
+                public val id: Long,
+                prev: S?,
+            ) : ConcurrentLinkedListNode<S>(prev) {
+                public fun probe(seg: S): Boolean = seg.isRemoved || isTail
+            }
+
+            public fun <S : Segment<S>> inspectWithScope(seg: S): Boolean =
+                with(seg) {
+                    val idCopy = id
+                    idCopy >= 0L && isRemoved
+                }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "internal/ConcurrentLinkedListCheck.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = assertNotNull(res.sourceArtifact).content
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(combined.contains("if (prev != nullptr)"))
+        assertTrue(combined.contains("set_value("))
+        assertTrue(combined.contains("seg->is_removed()"))
+        assertTrue(combined.contains("this->is_tail()") || combined.contains("is_tail()"))
+        assertTrue(combined.contains("cur_narrowed"))
+        assertTrue(combined.contains("kxs_recv"))
+        assertTrue(combined.contains("->id"))
+        assertTrue(combined.contains("->is_removed()"))
+    }
+
+    @Test
+    fun testSelectImplementationHoistedNestedClassAndClauseDataProjections() {
+        val source =
+            """
+            package kotlinx.coroutines.selects
+
+            import kotlin.coroutines.CoroutineContext
+
+            public open class SelectImplementation<R>(
+                public val context: CoroutineContext,
+            ) {
+                private val clauses: MutableList<ClauseData> = ArrayList()
+                private var state: Any? = null
+
+                public class ClauseData(
+                    public val clauseObject: Any,
+                    public val block: Any,
+                )
+
+                private fun Any.matchClause(): Boolean = this is ClauseData
+
+                public fun collectClause(x: Any?): Boolean {
+                    if (x is ClauseData) {
+                        clauses.add(x)
+                        return x.matchClause()
+                    }
+                    return when (state) {
+                        is ClauseData -> true
+                        else -> false
+                    }
+                }
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "selects/SelectCheck.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact?.content.orEmpty()
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(hpp.contains("class SelectImplementation_ClauseData"))
+        assertTrue(combined.contains("std::vector<std::shared_ptr<SelectImplementation_ClauseData>>{}") || combined.contains("std::vector<SelectImplementation_ClauseData>{}"))
+        assertTrue(combined.contains("SelectImplementation_ClauseData"))
+        assertTrue(combined.contains("this->match_clause(") || combined.contains("match_clause("))
+    }
+
+    @Test
+    fun getterConstnessTracksMutatingEnclosingCalls() {
+        val source =
+            """
+            package example.props
+
+            class CounterHolder {
+                private var count: Int = 0
+                private val fixed: Int = 7
+
+                fun bumpAndRead(): Int {
+                    count += 1
+                    return count
+                }
+
+                val stableVal: Int
+                    get() = fixed
+
+                val mutatingVal: Int
+                    get() = bumpAndRead()
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "example/props/CounterHolder.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact?.content.orEmpty()
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(hpp.contains("std::int32_t stable_val() const"))
+        assertFalse(hpp.contains("std::int32_t mutating_val() const"))
+        assertTrue(combined.contains("std::int32_t mutating_val()"))
+    }
+
+    @Test
+    fun exceptionElvisAndCancellationPtrLowering() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            import kotlinx.coroutines.CancellationException
+
+            const val CLOSE_MSG: String = "Channel was closed"
+
+            class SampleJob {
+                fun cancelInternal(cause: Throwable) {}
+
+                fun abort(cause: Throwable?) {
+                    val exc = cause ?: CancellationException(CLOSE_MSG)
+                    cancelInternal(exc)
+                }
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "kotlinx/coroutines/channels/SampleJob.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact?.content.orEmpty()
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(hpp.contains("#include <exception>"))
+        assertTrue(combined.contains("const std::string CLOSE_MSG"))
+        assertTrue(combined.contains("kxs_elvis("))
+        assertTrue(combined.contains("kxs_to_exception_ptr("))
+    }
+
+    @Test
+    fun broadcastCoroutineAndChannelScopeLowering() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            import kotlinx.coroutines.*
+            import kotlinx.coroutines.channels.Channel.Factory.BUFFERED
+            import kotlin.coroutines.*
+
+            public fun CoroutineScope.sampleBroadcast(
+                start: CoroutineStart = CoroutineStart.LAZY,
+                block: suspend ProducerScope<Int>.() -> Unit,
+            ): ReceiveChannel<Int> {
+                val ctx = newCoroutineContext(Dispatchers.Unconfined)
+                val ch = Channel<Int>(BUFFERED)
+                if (start.isLazy) {
+                    val u = block.createCoroutineUnintercepted(ch as ProducerScope<Int>, ch as Continuation<Unit>)
+                }
+                return ch
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "kotlinx/coroutines/channels/SampleBroadcast.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact?.content.orEmpty()
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(combined.contains("Dispatchers::instance().unconfined()"))
+        assertTrue(combined.contains("new_coroutine_context("))
+        assertTrue(combined.contains("is_lazy("))
+        assertTrue(combined.contains("BUFFERED"))
+        assertTrue(combined.contains("create_coroutine_unintercepted("))
+        assertFalse(combined.contains("auto u = block"))
+    }
+
+    @Test
+    fun emitsBroadcastChannelDelegationDispatchExceptionThisTemplateDeductionAndTryReturnFixes() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            import kotlinx.coroutines.*
+            import kotlinx.coroutines.selects.*
+            import kotlin.coroutines.*
+
+            class DispatchException(override val cause: Throwable) : Exception()
+
+            class DelegatedBroadcast<E>(
+                private val channel: BroadcastChannel<E>,
+            ) : BroadcastChannel<E> by channel {
+                fun describeSelf(): String = "DelegatedBroadcast(${'$'}this)"
+                fun probeState(state: Any?): Int =
+                    when (state) {
+                        REUSABLE -> 1
+                        else -> 0
+                    }
+            }
+
+            fun <R, T> startWithIdentity(
+                start: CoroutineStart,
+                receiver: R,
+                completion: Continuation<T>,
+                block: suspend R.() -> T,
+            ) {
+                start(block, receiver, completion)
+            }
+
+            fun tryCatchWithReturn(uCont: Continuation<Int>): Int {
+                val value = try {
+                    10
+                } catch (e: Throwable) {
+                    uCont.resumeWithException(e)
+                    return -1
+                }
+                return value
+            }
+            """.trimIndent() + "\n"
+
+        val res = translateKotlinToCpp(source, sourcePath = "kotlinx/coroutines/channels/SampleFixes.kt")
+        val hpp = res.headerArtifact.content
+        val cpp = res.sourceArtifact?.content.orEmpty()
+        val combined = "$hpp\n$cpp"
+
+        assertTrue(combined.contains("this_val") || combined.contains("(*this)"))
+        assertFalse(hpp.contains("std::exception_ptr cause() const override"))
+        assertTrue(hpp.contains("SelectClause2<E, std::shared_ptr<kotlinx::coroutines::channels::SendChannel<E>>>"))
+        assertTrue(combined.contains("kxs_any_eq(state, REUSABLE)"))
+        assertTrue(hpp.contains("std::type_identity_t<R>"))
+        assertTrue(hpp.contains("std::type_identity_t<std::shared_ptr<Continuation<T>>>"))
+        assertTrue(combined.contains("kxs_resume_with_exception("))
+        assertTrue(combined.contains("std::optional<"))
+    }
+
+    @Test
+    fun emitsCallableForwarderOverloadForWithCoroutineContextTemplate() {
+        val source =
+            """
+            package kotlinx.coroutines
+
+            import kotlin.coroutines.CoroutineContext
+
+            inline fun <T> withCoroutineContext(
+                context: CoroutineContext,
+                countOrElement: Any?,
+                block: () -> T,
+            ): T = block()
+            """.trimIndent() + "\n"
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/CoroutineContext.common.kt",
+            )
+        val hpp = res.headerArtifact.content
+
+        assertTrue(hpp.contains("#ifndef KXS_FN_CALLABLE_FWD_KOTLINX_COROUTINES_WITH_COROUTINE_CONTEXT_3"))
+        assertTrue(hpp.contains("template <typename KxsCallable>"))
+        assertTrue(hpp.contains("return with_coroutine_context<KxsRet>("))
+    }
+
+    @Test
+    fun mergedCompanionAndDeferredStaticDefsInInterface() {
+        val source =
+            """
+            package kotlinx.coroutines.flow
+
+            public interface SharingStarted {
+                public fun command(subscriptionCount: Int): Int
+
+                public companion object {
+                    public val Eagerly: SharingStarted = StartedEagerly()
+                    public val Lazily: SharingStarted = StartedLazily()
+                }
+            }
+
+            public fun SharingStarted.Companion.WhileSubscribed(): SharingStarted = StartedEagerly()
+
+            private class StartedEagerly : SharingStarted {
+                override fun command(subscriptionCount: Int): Int = 1
+            }
+
+            private class StartedLazily : SharingStarted {
+                override fun command(subscriptionCount: Int): Int = 2
+            }
+            """.trimIndent()
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/flow/SharingStarted.kt",
+            )
+        val hpp = res.headerArtifact.content
+
+        assertEquals(1, Regex("""struct\s+Companion\s*\{""").findAll(hpp).count())
+        assertFalse(hpp.contains("static inline const"))
+        assertTrue(hpp.indexOf("SharingStarted::eagerly = std::make_shared<StartedEagerly>()") > hpp.indexOf("class StartedEagerly"))
+        assertTrue(hpp.indexOf("SharingStarted::lazily = std::make_shared<StartedLazily>()") > hpp.indexOf("class StartedLazily"))
+    }
+
+    @Test
+    fun anonObjectCapturesOuterThisAndSharedLocal() {
+        val source =
+            """
+            package kotlinx.coroutines
+
+            public interface DisposableHandle {
+                public fun dispose()
+            }
+
+            public open class OuterJob {
+                protected val flag: Boolean = false
+
+                protected fun notifyOuter(x: Any?) {}
+
+                public fun attach(child: DisposableHandle) {
+                    val captured: DisposableHandle = child
+                    val handler = object : DisposableHandle {
+                        override fun dispose() {
+                            captured.dispose()
+                            if (flag) {
+                                notifyOuter(this)
+                                notifyOuter(this@OuterJob)
+                            }
+                        }
+                    }
+                    handler.dispose()
+                }
+            }
+            """.trimIndent()
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/OuterJob.kt",
+            )
+        val combined = res.headerArtifact.content + "\n" + res.sourceArtifact?.content.orEmpty()
+
+        assertTrue(combined.contains("using KxsOuterPtr = decltype(this);"))
+        assertTrue(combined.contains("KxsOuterPtr kxs_outer_;"))
+        assertTrue(combined.contains("this->captured_cap->dispose()"))
+        assertTrue(combined.contains("this->kxs_outer_->notify_outer((*this))"))
+        assertTrue(combined.contains("this->kxs_outer_->notify_outer("))
+    }
+
+    @Test
+    fun channelFactoryInfersUnitTypeInSubnamespace() {
+        val flowSource =
+            """
+            package kotlinx.coroutines.flow
+
+            import kotlinx.coroutines.channels.Channel
+
+            public class Holder {
+                public val updates: Channel<Unit> = Channel(Channel.CONFLATED)
+            }
+            """.trimIndent()
+
+        val flowRes =
+            translateKotlinToCpp(
+                flowSource,
+                sourcePath = "kotlinx/coroutines/flow/Holder.kt",
+            )
+        val flowCombined = flowRes.headerArtifact.content + "\n" + flowRes.sourceArtifact?.content.orEmpty()
+
+        assertTrue(flowCombined.contains("using namespace kotlinx::coroutines;"))
+        assertTrue(flowCombined.contains("Channel<Unit>"))
+        assertTrue(flowCombined.contains("channel<Unit>("))
+
+        val externalSource =
+            """
+            package app.sample
+
+            import kotlinx.coroutines.channels.Channel
+
+            public class Holder {
+                public val updates: Channel<Unit> = Channel(Channel.CONFLATED)
+            }
+            """.trimIndent()
+
+        val externalRes =
+            translateKotlinToCpp(
+                externalSource,
+                sourcePath = "app/sample/Holder.kt",
+            )
+        val externalCombined = externalRes.headerArtifact.content + "\n" + externalRes.sourceArtifact?.content.orEmpty()
+
+        assertTrue(externalCombined.contains("Channel<kotlinx::coroutines::Unit>"))
+        assertTrue(externalCombined.contains("channel<kotlinx::coroutines::Unit>("))
+    }
+
+    @Test
+    fun synchronizedInlineLocalDeclInfersTypesAndAvoidsStdAny() {
+        val source =
+            """
+            package kotlinx.coroutines.flow
+
+            import kotlinx.coroutines.DisposableHandle
+            import kotlinx.coroutines.internal.SynchronizedObject
+            import kotlinx.coroutines.internal.synchronized
+
+            private class Emitter : DisposableHandle {
+                override fun dispose() {}
+            }
+
+            public class ThreadSafeHeap<T> {
+                public inline fun removeFirstIf(predicate: (T) -> Boolean): T? = null
+            }
+
+            public class TestDispatchEvent(
+                public val time: Long,
+                public val tag: Int,
+            )
+
+            public class Scheduler : SynchronizedObject() {
+                private val lock = SynchronizedObject()
+                private val events = ThreadSafeHeap<TestDispatchEvent>()
+
+                public fun pickSlot(fallback: Int): Int {
+                    val slot = synchronized(this) {
+                        var candidate = 0
+                        while (true) {
+                            candidate = fallback
+                            if (candidate > 0) break
+                        }
+                        candidate
+                    }
+                    return slot
+                }
+
+                public fun tryEmit(empty: Boolean): DisposableHandle? {
+                    val emitter = synchronized(this) lock@{
+                        if (empty) return@lock null
+                        Emitter()
+                    }
+                    return emitter
+                }
+
+                public fun advance(targetTime: Long): Long {
+                    val event = synchronized(lock) {
+                        val event = events.removeFirstIf { it.time <= targetTime }
+                        if (event == null) {
+                            return targetTime
+                        } else {
+                            event
+                        }
+                    }
+                    return event.time
+                }
+            }
+            """.trimIndent()
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/flow/Scheduler.kt",
+            )
+        val combined = res.headerArtifact.content + "\n" + res.sourceArtifact?.content.orEmpty()
+
+        assertTrue(combined.contains("-> std::shared_ptr<Emitter>"))
+        assertTrue(combined.contains("return nullptr;"))
+        assertTrue(combined.contains("std::optional<TestDispatchEvent>"))
+        assertFalse(combined.contains("std::any event"))
+        assertFalse(combined.contains("std::any emitter"))
+        assertFalse(combined.contains("std::any slot"))
+    }
+
+    @Test
+    fun inlineTemplateDeductionSafeCallAndStdAnyNormalization() {
+        val source =
+            """
+            package kotlinx.coroutines.channels
+
+            public class Box<E>(public var item: E) {
+                public inline fun inspect(block: (E) -> Unit) {
+                    block(item)
+                }
+
+                public inline fun <R> runInner(block: Box<E>.() -> R): R = block()
+
+                public fun outerTemplateCaller(other: Box<E>) {
+                    other.inspect { }
+                    runInner { }
+                }
+            }
+
+            public fun callInlineOnConcreteBox(box: Box<Int>?, cond: Boolean): Any? {
+                val concrete: Box<Int> = Box(1)
+                concrete.inspect { }
+                box?.inspect { }
+                return when {
+                    cond -> 1
+                    else -> null
+                }
+            }
+            """.trimIndent()
+
+        val res = translateKotlinToCpp(source, sourcePath = "kotlinx/coroutines/channels/Box.kt")
+        val combined = res.headerArtifact.content + "\n" + res.sourceArtifact?.content.orEmpty()
+
+        assertTrue(combined.contains("template <typename...> class KxsC, typename KxsT0"))
+        assertTrue(combined.contains("std::type_identity<KxsT0>"))
+        assertTrue(combined.contains("!kxs_is_null("))
+        assertTrue(combined.contains("-> std::any"))
+        assertFalse(combined.contains("using E = std::remove_cvref_t<decltype"))
+    }
+
+    @Test
+    fun exceptionCoercionSwitchBreakAndTernaryThrowGuards() {
+        val source =
+            """
+            package kotlinx.coroutines.test
+
+            public fun coerceAndControl(
+                flag: Boolean,
+                code: Int,
+                err: Throwable,
+            ): Throwable? {
+                val e1: Throwable? = err
+                val e2: Throwable = IllegalStateException("fail")
+                var chosen: Throwable? = null
+                chosen = if (flag) e1 else throw IllegalStateException("bad")
+                while (flag) {
+                    when (code) {
+                        1 -> break
+                        else -> break
+                    }
+                }
+                val shadow = 1
+                if (flag) {
+                    val shadow = 2
+                    if (shadow > 0) return chosen ?: e2
+                }
+                return e2
+            }
+            """.trimIndent()
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/test/ExceptionCoercion.kt",
+            )
+        val combined = res.headerArtifact.content + "\n" + res.sourceArtifact?.content.orEmpty()
+
+        assertTrue(combined.contains("kxs_to_exception_ptr("))
+        assertFalse(combined.contains("switch (code)"))
+        assertTrue(combined.contains("if ((code == 1))"))
+        assertTrue(combined.contains("shadow_shadow_"))
+        assertFalse(combined.contains("? e1 : throw"))
+    }
+
+    @Test
+    fun workerEventLoopMutableSetAndCoerceMixedTypes() {
+        val source =
+            """
+            package kotlinx.coroutines.native
+
+            import kotlin.native.concurrent.Worker
+
+            public fun useWorkerAndEventLoop(seen: MutableSet<Worker>, v: Long): Long {
+                val cur = Worker.current
+                seen.add(cur)
+                val bg = Worker.start("bg")
+                bg.requestTermination().result
+                val loop = ThreadLocalEventLoop.eventLoop
+                val loopViaGetter = loop
+                val _unused = loopViaGetter
+                return v.coerceAtLeast(0)
+            }
+            """.trimIndent()
+
+        val res =
+            translateKotlinToCpp(
+                source,
+                sourcePath = "kotlinx/coroutines/native/WorkerOps.kt",
+            )
+        val combined = res.headerArtifact.content + "\n" + res.sourceArtifact?.content.orEmpty()
+
+        assertTrue(combined.contains("Worker::current"))
+        assertTrue(combined.contains("consume_result()"))
+        assertTrue(combined.contains("ThreadLocalEventLoop::instance().event_loop()"))
+        assertTrue(combined.contains("kxs_c.insert("))
+        assertTrue(combined.contains("std::common_type_t<"))
     }
 }

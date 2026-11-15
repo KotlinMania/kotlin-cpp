@@ -151,8 +151,11 @@ internal object CppComments {
         if (body.isEmpty()) return "$indent//"
         val leadingSpace = if (body.startsWith(" ")) " " else ""
         val content = if (leadingSpace.isNotEmpty()) body.substring(1) else body
-        if (content.startsWith("port-lint:") || content.startsWith("Transliterated from:")) {
+        if (content.startsWith("port-lint:")) {
             return "$indent//$leadingSpace$content"
+        }
+        if (content.startsWith("Transliterated from:")) {
+            return ""
         }
         val translated = sanitizeLeadingStubMarker(translateProseLine(content, knownFunctionNames))
         return "$indent//$leadingSpace$translated".trimEnd()
@@ -171,65 +174,88 @@ internal object CppComments {
                     .removePrefix("/*")
                     .removeSuffix("*/")
                     .trim()
+            if (inner.startsWith("Transliterated from:")) return ""
             val translated =
                 sanitizeLeadingStubMarker(translateProseLine(inner, knownFunctionNames))
                     .replace("*/", "* /")
                     .replace("/*", "/ *")
             return if (translated.isEmpty()) "$indent/* */" else "$indent/* $translated */"
         }
-        return buildString {
-            append(indent).append("/*")
-            val firstRest = lines[0].trim().removePrefix("/*").trim()
-            if (firstRest.isNotEmpty()) {
-                append(' ').append(
-                    sanitizeLeadingStubMarker(translateProseLine(firstRest, knownFunctionNames))
-                        .replace("*/", "* /")
-                        .replace("/*", "/ *"),
-                )
+        val bodyLines = extractBlockCommentBodyLines(rawText)
+        val renderedLines = translateKdocLines(bodyLines, knownFunctionNames, allowFenceTranslation = true)
+        val sanitizedLines = ArrayList<String>(renderedLines.size)
+        var inFence = false
+        for (line in renderedLines) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("```")) {
+                inFence = !inFence
+                sanitizedLines.add(line)
+                continue
             }
-            for (idx in 1 until lines.lastIndex) {
-                append('\n').append(indent)
-                val lineTrimmed = lines[idx].trimStart()
-                if (lineTrimmed.startsWith("*")) {
-                    val afterStar = lineTrimmed.removePrefix("*")
-                    if (afterStar.isBlank()) {
-                        append(" *")
-                    } else {
-                        val content = if (afterStar.startsWith(" ")) afterStar.substring(1) else afterStar
-                        append(" * ").append(
-                            sanitizeLeadingStubMarker(translateProseLine(content, knownFunctionNames))
-                                .replace("*/", "* /")
-                                .replace("/*", "/ *")
-                                .trimEnd(),
-                        )
-                    }
-                } else {
-                    append(
-                        sanitizeLeadingStubMarker(translateProseLine(lineTrimmed, knownFunctionNames))
-                            .replace("*/", "* /")
-                            .replace("/*", "/ *")
-                            .trimEnd(),
-                    )
-                }
-            }
-            val lastTrimmed = lines.last().trim()
-            if (lastTrimmed == "*/") {
-                append('\n').append(indent).append(" */")
+            if (!inFence) {
+                if (trimmed.startsWith("Transliterated from:")) continue
+                sanitizedLines.add(sanitizeLeadingStubMarker(translateKnitBlockCommentLine(line)))
             } else {
-                val beforeClose = lastTrimmed.removeSuffix("*/").removePrefix("*").trim()
-                append('\n').append(indent)
-                if (beforeClose.isNotEmpty()) {
-                    append(" * ")
-                        .append(
-                            sanitizeLeadingStubMarker(translateProseLine(beforeClose, knownFunctionNames))
-                                .replace("*/", "* /")
-                                .replace("/*", "/ *"),
-                        ).append(" */")
-                } else {
-                    append(" */")
-                }
+                sanitizedLines.add(line)
             }
         }
+        if (sanitizedLines.isEmpty()) return ""
+        return buildString {
+            append(indent).append("/*\n")
+            for (line in sanitizedLines) {
+                val safe = line.replace("*/", "* /").replace("/*", "/ *").trimEnd()
+                if (safe.isBlank()) {
+                    append(indent).append(" *\n")
+                } else {
+                    append(indent).append(" * ").append(safe).append('\n')
+                }
+            }
+            append(indent).append(" */")
+        }
+    }
+
+    private fun extractBlockCommentBodyLines(rawText: String): List<String> {
+        val stripped =
+            rawText
+                .trim()
+                .removePrefix("/*")
+                .removeSuffix("*/")
+        val split = stripped.split('\n').map { it.trimEnd('\r') }
+        val rawBody = ArrayList<String>(split.size)
+        for ((idx, line) in split.withIndex()) {
+            val trimmedStart = line.trimStart()
+            if (idx == 0 && trimmedStart.isEmpty()) continue
+            if (idx == split.lastIndex && trimmedStart.isEmpty()) continue
+            if (trimmedStart.startsWith("*")) {
+                val afterStar = trimmedStart.substring(1)
+                rawBody.add(if (afterStar.startsWith(" ")) afterStar.substring(1) else afterStar)
+            } else {
+                rawBody.add(line.trimEnd())
+            }
+        }
+        return rawBody
+    }
+
+    private fun translateKnitBlockCommentLine(line: String): String {
+        val trimmed = line.trim()
+        val indent = line.substring(0, line.length - line.trimStart().length)
+        if (trimmed.startsWith("import ")) {
+            val target = trimmed.removePrefix("import ").trim().removeSuffix(";")
+            return if (target.endsWith(".*")) {
+                val ns = target.removeSuffix(".*").replace('.', ':').replace(":", "::")
+                "${indent}using namespace $ns;"
+            } else {
+                val sym = target.replace(".", "::")
+                "${indent}using $sym;"
+            }
+        }
+        if (trimmed == "fun main() = runBlocking {") {
+            return "${indent}int main() { return run_blocking([&]() {"
+        }
+        if (trimmed == ".toList().joinToString().let { println(it) } }") {
+            return "$indent.to_list().join_to_string().let([&](auto&& it) { std::cout << it << '\\n'; }); }"
+        }
+        return line
     }
 
     private val LEADING_STUB_WORDS: List<String> =
@@ -359,6 +385,7 @@ internal object CppComments {
                             closeFenceLine = line.trimEnd(),
                             fenceIndent = fenceIndent,
                             bufferedFence = bufferedFence,
+                            knownFunctionNames = knownFunctionNames,
                         )
                         bufferedFence.clear()
                     } else {
@@ -372,7 +399,11 @@ internal object CppComments {
             when (state) {
                 FenceState.VERBATIM -> out.add(line.trimEnd())
                 FenceState.KOTLIN -> bufferedFence.add(line)
-                FenceState.NONE -> out.add(translateProseLine(line, knownFunctionNames).trimEnd())
+                FenceState.NONE -> {
+                    if (!line.trim().startsWith("Transliterated from:")) {
+                        out.add(translateProseLine(line, knownFunctionNames).trimEnd())
+                    }
+                }
             }
         }
 
@@ -383,6 +414,7 @@ internal object CppComments {
                 closeFenceLine = "$fenceIndent```",
                 fenceIndent = fenceIndent,
                 bufferedFence = bufferedFence,
+                knownFunctionNames = knownFunctionNames,
             )
         }
         return out
@@ -394,8 +426,10 @@ internal object CppComments {
         closeFenceLine: String,
         fenceIndent: String,
         bufferedFence: List<String>,
+        knownFunctionNames: Set<String>,
     ) {
-        val translated = translateKotlinDocCodeBlock(bufferedFence)
+        val (codeLines, trailingProse) = extractTrailingMarkdownNotes(bufferedFence)
+        val translated = translateKotlinDocCodeBlock(codeLines)
         if (translated != null) {
             out.add("$fenceIndent```cpp")
             for (codeLine in translated) {
@@ -407,22 +441,36 @@ internal object CppComments {
             }
             out.add("$fenceIndent```")
         } else {
-            out.add(openFenceLine)
-            for (raw in bufferedFence) {
+            val safeOpen =
+                if (openFenceLine.trim().lowercase().startsWith("```kotlin")) {
+                    "$fenceIndent```"
+                } else {
+                    openFenceLine
+                }
+            out.add(safeOpen)
+            for (raw in codeLines) {
                 out.add(raw.trimEnd())
             }
             out.add(closeFenceLine)
+        }
+        if (trailingProse.isNotEmpty()) {
+            out.add("")
+            for (noteLine in trailingProse) {
+                out.add(translateProseLine(noteLine, knownFunctionNames).trimEnd())
+            }
         }
     }
 
     private fun translateKotlinDocCodeBlock(rawFenceLines: List<String>): List<String>? {
         if (rawFenceLines.isEmpty() || rawFenceLines.all { it.isBlank() }) return emptyList()
         val dedented = stripCommonIndentation(rawFenceLines)
-        val joined = dedented.joinToString("\n")
-        val rawPackets = KotlinPacketLexing.lexSnippetPacketsOrNull(joined, "<doc>") ?: return null
+        val joinedRaw = dedented.joinToString("\n")
+        if (isPlainDiagramOrTrace(joinedRaw)) return null
+        val preNormalized = normalizeKotlinDocSnippet(dedented).joinToString("\n")
+        val rawPackets = KotlinPacketLexing.lexSnippetPacketsOrNull(preNormalized, "<doc>") ?: return null
         val normalized = renderNormalizedSnippetFromPackets(rawPackets)
         val normalizedPackets =
-            if (normalized == joined) {
+            if (normalized == preNormalized) {
                 rawPackets
             } else {
                 KotlinPacketLexing.lexSnippetPacketsOrNull(normalized, "<doc>") ?: return null
@@ -452,6 +500,397 @@ internal object CppComments {
             val bodySource = sourceBody.ifBlank { headerBody }
             unwrapSyntheticSnippetFunction(bodySource)
         }
+    }
+
+    private fun extractTrailingMarkdownNotes(lines: List<String>): Pair<List<String>, List<String>> {
+        if (lines.isEmpty()) return lines to emptyList()
+        var cut = lines.size
+        while (cut > 0) {
+            val t = lines[cut - 1].trim()
+            if (t.isEmpty()) {
+                if (cut < lines.size) {
+                    cut -= 1
+                    continue
+                }
+                break
+            }
+            if (t.startsWith("**") || t.startsWith("*Note") || t.startsWith("*Caution") || t.startsWith("*Warning")) {
+                cut -= 1
+                continue
+            }
+            break
+        }
+        while (cut > 0 && lines[cut - 1].isBlank()) cut -= 1
+        if (cut == lines.size || cut == 0) return lines to emptyList()
+        val notes = lines.subList(cut, lines.size).dropWhile { it.isBlank() }
+        if (notes.isEmpty()) return lines to emptyList()
+        return lines.subList(0, cut) to notes
+    }
+
+    private fun isPlainDiagramOrTrace(joined: String): Boolean {
+        val codeLines =
+            joined.lines().mapNotNull { line ->
+                val idx = line.indexOf("//")
+                val code = (if (idx >= 0) line.substring(0, idx) else line).trim()
+                code.takeIf { it.isNotEmpty() }
+            }
+        if (codeLines.isEmpty()) return false
+        val body = codeLines.joinToString("\n")
+        val hasKotlinConstruct =
+            Regex(
+                """\b(?:fun|val|var|class|interface|object|package|import|when|while|for|try|catch|return|throw|contract|launch|async|runBlocking|coroutineScope|withContext|flow|emit|produce|select)\b""",
+            ).containsMatchIn(body) ||
+                body.contains('{') ||
+                body.contains('}') ||
+                body.contains(';') ||
+                Regex("""[A-Za-z0-9_)\]]\s*->\s*""").containsMatchIn(body)
+        if (hasKotlinConstruct) return false
+        return body.contains("+---") ||
+            body.contains("-->--") ||
+            body.contains("| ") ||
+            body.contains("==>") ||
+            Regex("""^Thread\s+\d+:""", RegexOption.MULTILINE).containsMatchIn(body)
+    }
+
+    private fun normalizeKotlinDocSnippet(lines: List<String>): List<String> {
+        val unescaped =
+            lines
+                .map { it.replace("/ *", "/*").replace("* /", "*/") }
+                .filterNot { line ->
+                    val t = line.trim()
+                    t.startsWith("<!---") || t == "-->" || t.startsWith("----- ")
+                }
+        val withoutContracts = stripContractBlocks(unescaped)
+        val normalizedLines = ArrayList<String>(withoutContracts.size)
+        var inTripleString = false
+        var inFunParams = false
+        var funParamParenDepth = 0
+
+        for (rawLine in withoutContracts) {
+            var line = rawLine
+            if (!inTripleString) {
+                if (Regex("""^\s*(?:(?:public|private|internal|protected|suspend|inline|operator|infix|tailrec|override|open|final|abstract)\s+)*fun\b""").containsMatchIn(line)) {
+                    inFunParams = line.contains('(')
+                    funParamParenDepth = 0
+                }
+                if (inFunParams) {
+                    val fixedParams = stripFunParamValVar(line, funParamParenDepth)
+                    line = fixedParams.first
+                    funParamParenDepth = fixedParams.second
+                    if (funParamParenDepth <= 0 && line.contains(')')) {
+                        inFunParams = false
+                    }
+                }
+                line = fixUnclosedQuoteBeforeParen(line)
+                line = fixLambdaHeaderArrow(line)
+                line = normalizeEllipsisPlaceholders(line)
+            }
+            var idx = 0
+            while (idx + 2 < line.length) {
+                if (line.startsWith("\"\"\"", idx)) {
+                    inTripleString = !inTripleString
+                    idx += 3
+                } else {
+                    idx += 1
+                }
+            }
+            normalizedLines.add(line)
+        }
+        return balanceDocDelimiters(normalizedLines)
+    }
+
+    private fun stripContractBlocks(lines: List<String>): List<String> {
+        val out = ArrayList<String>(lines.size)
+        var skipping = false
+        var braceDepth = 0
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (!skipping && Regex("""^contract\s*\{""").containsMatchIn(trimmed)) {
+                skipping = true
+                braceDepth = countBraceDelta(trimmed)
+                if (braceDepth <= 0) skipping = false
+                continue
+            }
+            if (skipping) {
+                braceDepth += countBraceDelta(trimmed)
+                if (braceDepth <= 0) skipping = false
+                continue
+            }
+            out.add(line)
+        }
+        return out
+    }
+
+    private fun countBraceDelta(text: String): Int {
+        var delta = 0
+        for (ch in text) {
+            if (ch == '{') {
+                delta += 1
+            } else if (ch == '}') {
+                delta -= 1
+            }
+        }
+        return delta
+    }
+
+    private fun stripFunParamValVar(
+        line: String,
+        startParenDepth: Int,
+    ): Pair<String, Int> {
+        val sb = StringBuilder(line.length)
+        var depth = startParenDepth
+        var angleDepth = 0
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            if (depth == 0) {
+                when {
+                    ch == '<' -> angleDepth += 1
+                    ch == '>' && angleDepth > 0 -> angleDepth -= 1
+                    ch == '(' && angleDepth == 0 -> depth = 1
+                }
+                sb.append(ch)
+                i += 1
+                continue
+            }
+            if (ch == '(') {
+                depth += 1
+                sb.append(ch)
+                i += 1
+            } else if (ch == ')') {
+                depth = (depth - 1).coerceAtLeast(0)
+                sb.append(ch)
+                i += 1
+            } else if (depth == 1) {
+                val atParamStart =
+                    sb.isEmpty() ||
+                        sb.last() == '(' ||
+                        sb.last() == ',' ||
+                        sb.toString().let { cur -> cur.trimEnd().let { it.endsWith("(") || it.endsWith(",") || it.isEmpty() } }
+                if (atParamStart && (line.startsWith("val ", i) || line.startsWith("var ", i))) {
+                    i += 4
+                } else {
+                    sb.append(ch)
+                    i += 1
+                }
+            } else {
+                sb.append(ch)
+                i += 1
+            }
+        }
+        return sb.toString() to depth
+    }
+
+    private fun fixUnclosedQuoteBeforeParen(line: String): String {
+        var inString = false
+        var inChar = false
+        var escaped = false
+        var codeEnd = line.length
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            if (escaped) {
+                escaped = false
+                i += 1
+                continue
+            }
+            if ((inString || inChar) && ch == '\\') {
+                escaped = true
+                i += 1
+                continue
+            }
+            if (!inString && !inChar && i + 1 < line.length && line[i] == '/' && line[i + 1] == '/') {
+                codeEnd = i
+                break
+            }
+            if (!inChar && ch == '"') {
+                inString = !inString
+            } else if (!inString && ch == '\'') {
+                inChar = !inChar
+            }
+            i += 1
+        }
+        if (!inString) return line
+        val codePart = line.substring(0, codeEnd)
+        val suffix = line.substring(codeEnd)
+        val trimmedCode = codePart.trimEnd()
+        val hasSemi = trimmedCode.endsWith(");")
+        val targetClose = if (hasSemi) trimmedCode.length - 2 else trimmedCode.length - 1
+        if (targetClose <= 0 || trimmedCode[targetClose] != ')') return line
+        val fixedCode = trimmedCode.substring(0, targetClose) + "\"" + trimmedCode.substring(targetClose)
+        return fixedCode + suffix
+    }
+
+    private fun fixLambdaHeaderArrow(line: String): String {
+        val commentIdx = findLineCommentStartOutsideStrings(line)
+        val codePart = (if (commentIdx >= 0) line.substring(0, commentIdx) else line).trimEnd()
+        val commentSuffix = if (commentIdx >= 0) line.substring(commentIdx) else ""
+        if (codePart.contains("->")) return line
+        val pattern =
+            Regex(
+                """^.*\{\s*(?:_|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[A-Za-z0-9_<>.?]+)?(?:\s*,\s*(?:_|[A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*[A-Za-z0-9_<>.?]+)?)*\s*$""",
+            )
+        if (!pattern.matches(codePart)) return line
+        return if (commentSuffix.isEmpty()) "$codePart ->" else "$codePart -> $commentSuffix"
+    }
+
+    private fun normalizeEllipsisPlaceholders(line: String): String {
+        val commentIdx = findLineCommentStartOutsideStrings(line)
+        val codeRaw = if (commentIdx >= 0) line.substring(0, commentIdx) else line
+        val commentSuffix = if (commentIdx >= 0) line.substring(commentIdx) else ""
+        val trimmedCode = codeRaw.trim()
+        if (trimmedCode.startsWith("...")) {
+            val lead = codeRaw.substring(0, codeRaw.length - codeRaw.trimStart().length)
+            val rest = trimmedCode.removeSurrounding("...", "...").trim()
+            val commentBody = if (rest.isEmpty()) "..." else rest
+            val replaced = "$lead/* $commentBody */"
+            return if (commentSuffix.isEmpty()) replaced else "$replaced $commentSuffix"
+        }
+        var updated = codeRaw
+        updated =
+            Regex("""^(\s*(?:[a-z]+\s+)*fun\b.*)=\s*\.\.\.\s*$""").replace(updated) { m ->
+                "${m.groupValues[1]}{ /* ... */ }"
+            }
+        updated = Regex("""=\s*\.\.\.\s*$""").replace(updated, "= null")
+        updated = Regex("""\bthrow\s+\.\.\.""").replace(updated, "throw Exception(\"...\")")
+        return if (commentSuffix.isEmpty()) updated else updated + commentSuffix
+    }
+
+    private fun findLineCommentStartOutsideStrings(line: String): Int {
+        var inString = false
+        var inChar = false
+        var escaped = false
+        var i = 0
+        while (i + 1 < line.length) {
+            val ch = line[i]
+            if (escaped) {
+                escaped = false
+                i += 1
+                continue
+            }
+            if ((inString || inChar) && ch == '\\') {
+                escaped = true
+                i += 1
+                continue
+            }
+            if (!inString && !inChar && ch == '/' && line[i + 1] == '/') return i
+            if (!inChar && ch == '"') {
+                inString = !inString
+            } else if (!inString && ch == '\'') {
+                inChar = !inChar
+            }
+            i += 1
+        }
+        return -1
+    }
+
+    private data class OpenDelimiter(
+        val ch: Char,
+        val indent: Int,
+    )
+
+    private fun balanceDocDelimiters(lines: List<String>): List<String> {
+        val out = ArrayList<String>(lines.size + 4)
+        val stack = ArrayDeque<OpenDelimiter>()
+        var inBlockComment = false
+        for (line in lines) {
+            val stripped = stripCommentsAndStringsForBalance(line, inBlockComment)
+            val codeText = stripped.first
+            inBlockComment = stripped.second
+            val trimmedStart = line.trimStart()
+            val lineIndent = line.length - trimmedStart.length
+            if (trimmedStart.startsWith(".") && stack.lastOrNull()?.ch == '{') {
+                val top = stack.last()
+                if (lineIndent <= top.indent) {
+                    stack.removeLast()
+                    out.add(" ".repeat(top.indent) + "}")
+                }
+            }
+            out.add(line)
+            for (ch in codeText) {
+                when (ch) {
+                    '(', '{' -> stack.addLast(OpenDelimiter(ch, lineIndent))
+                    ')' -> if (stack.lastOrNull()?.ch == '(') stack.removeLast()
+                    '}' -> if (stack.lastOrNull()?.ch == '{') stack.removeLast()
+                }
+            }
+        }
+        if (stack.isNotEmpty()) {
+            val tail = StringBuilder()
+            while (stack.isNotEmpty()) {
+                val open = stack.removeLast()
+                if (open.ch == '(') {
+                    tail.append(')')
+                } else {
+                    if (tail.isNotEmpty()) {
+                        out.add(tail.toString())
+                        tail.clear()
+                    }
+                    out.add(" ".repeat(open.indent) + "}")
+                }
+            }
+            if (tail.isNotEmpty()) out.add(tail.toString())
+        }
+        return out
+    }
+
+    private fun stripCommentsAndStringsForBalance(
+        line: String,
+        startInBlockComment: Boolean,
+    ): Pair<String, Boolean> {
+        val sb = StringBuilder(line.length)
+        var inBlock = startInBlockComment
+        var inString = false
+        var inChar = false
+        var escaped = false
+        var i = 0
+        while (i < line.length) {
+            val ch = line[i]
+            if (inBlock) {
+                if (ch == '*' && i + 1 < line.length && line[i + 1] == '/') {
+                    inBlock = false
+                    i += 2
+                } else {
+                    i += 1
+                }
+                continue
+            }
+            if (escaped) {
+                escaped = false
+                i += 1
+                continue
+            }
+            if (inString || inChar) {
+                when {
+                    ch == '\\' -> escaped = true
+                    inString && ch == '"' -> inString = false
+                    inChar && ch == '\'' -> inChar = false
+                }
+                i += 1
+                continue
+            }
+            if (ch == '/' && i + 1 < line.length) {
+                if (line[i + 1] == '/') break
+                if (line[i + 1] == '*') {
+                    inBlock = true
+                    i += 2
+                    continue
+                }
+            }
+            if (ch == '"') {
+                inString = true
+                i += 1
+                continue
+            }
+            if (ch == '\'') {
+                inChar = true
+                i += 1
+                continue
+            }
+            sb.append(ch)
+            i += 1
+        }
+        return sb.toString() to inBlock
     }
 
     private fun unwrapSyntheticSnippetFunction(rendered: String): List<String>? {
@@ -796,6 +1235,11 @@ internal object CppComments {
                         KtTokens.VAR_KEYWORD_ID,
                         -> sb.append("auto")
                         KtTokens.NULL_KEYWORD_ID -> sb.append("nullptr")
+                        KtTokens.FUN_KEYWORD_ID -> {
+                            val nextSig = nextSignificantPacket(packets, idx + 1)
+                            val nextIdent = (nextSig as? SyntaxPacket.IdentPacket)?.unescapedName
+                            sb.append(if (nextIdent == "main") "int" else "void")
+                        }
                         else -> sb.append(pkt.rawText)
                     }
                     prevSigPacket = pkt
@@ -849,12 +1293,98 @@ internal object CppComments {
                             else -> ident
                         }
                     sb.append(mapped)
+                    if (ident == "main" &&
+                        (prevSigPacket as? SyntaxPacket.KeywordPacket)?.keywordId == KtTokens.FUN_KEYWORD_ID &&
+                        nextSignificantPacket(packets, idx + 1) == null
+                    ) {
+                        sb.append("()")
+                    }
                     prevSigPacket = pkt
                     prevIdentWasPascal = isPascal && mapped == ident
                 }
             }
         }
         return sb.toString()
+    }
+
+    internal fun stripCppCommentsAndStrings(code: String): String {
+        val sb = StringBuilder(code.length)
+        var i = 0
+        val n = code.length
+        while (i < n) {
+            val ch = code[i]
+            if (ch == '/' && i + 1 < n) {
+                val next = code[i + 1]
+                if (next == '/') {
+                    while (i < n && code[i] != '\n') {
+                        sb.append(' ')
+                        i += 1
+                    }
+                    continue
+                }
+                if (next == '*') {
+                    sb.append("  ")
+                    i += 2
+                    while (i < n) {
+                        if (code[i] == '*' && i + 1 < n && code[i + 1] == '/') {
+                            sb.append("  ")
+                            i += 2
+                            break
+                        }
+                        sb.append(if (code[i] == '\n') '\n' else ' ')
+                        i += 1
+                    }
+                    continue
+                }
+            }
+            if (ch == 'R' && i + 1 < n && code[i + 1] == '"') {
+                val openParen = code.indexOf('(', i + 2)
+                if (openParen > i + 1) {
+                    val delim = code.substring(i + 2, openParen)
+                    if (delim.length <= 16 && delim.none { it.isWhitespace() || it == '\\' || it == ')' }) {
+                        val endMarker = ")$delim\""
+                        val closeIdx = code.indexOf(endMarker, openParen + 1)
+                        if (closeIdx >= 0) {
+                            val end = closeIdx + endMarker.length
+                            for (k in i until end) sb.append(if (code[k] == '\n') '\n' else ' ')
+                            i = end
+                            continue
+                        }
+                    }
+                }
+            }
+            if (ch == '"' || ch == '\'') {
+                val quote = ch
+                sb.append(' ')
+                i += 1
+                var escaped = false
+                while (i < n) {
+                    val c = code[i]
+                    sb.append(if (c == '\n') '\n' else ' ')
+                    i += 1
+                    if (escaped) {
+                        escaped = false
+                    } else if (c == '\\') {
+                        escaped = true
+                    } else if (c == quote) {
+                        break
+                    }
+                }
+                continue
+            }
+            sb.append(ch)
+            i += 1
+        }
+        return sb.toString()
+    }
+
+    internal fun containsWholeWordInCode(
+        code: String,
+        word: String,
+    ): Boolean {
+        if (word.isEmpty() || code.isEmpty()) return false
+        val stripped = stripCppCommentsAndStrings(code)
+        return Regex("""(?<![A-Za-z0-9_])${Regex.escape(word)}(?![A-Za-z0-9_])""").containsMatchIn(stripped)
     }
 
     private fun nextSignificantPacket(

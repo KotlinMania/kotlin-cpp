@@ -188,6 +188,33 @@ internal object FrameAstHelpers {
         return hasDirectKeyword(stream, modList, keywordId)
     }
 
+    fun subtreeHasUnhandledControlJump(
+        stream: PacketStream,
+        root: PacketFrame,
+        loopDepth: Int = 0,
+    ): Boolean =
+        when (root.nodeTypeId) {
+            KtNodeTypes.FUN_ID,
+            KtNodeTypes.CLASS_ID,
+            KtNodeTypes.OBJECT_DECLARATION_ID,
+            KtNodeTypes.OBJECT_LITERAL_ID,
+            KtNodeTypes.LAMBDA_EXPRESSION_ID,
+            -> false
+
+            KtNodeTypes.RETURN_ID -> true
+
+            KtNodeTypes.BREAK_ID,
+            KtNodeTypes.CONTINUE_ID,
+            -> loopDepth == 0 || firstChildFrame(stream, root, KtNodeTypes.LABEL_QUALIFIER_ID) != null
+
+            KtNodeTypes.FOR_ID,
+            KtNodeTypes.WHILE_ID,
+            KtNodeTypes.DO_WHILE_ID,
+            -> childFrames(stream, root).any { subtreeHasUnhandledControlJump(stream, it, loopDepth + 1) }
+
+            else -> childFrames(stream, root).any { subtreeHasUnhandledControlJump(stream, it, loopDepth) }
+        }
+
     fun renderPacketsText(
         stream: PacketStream,
         frame: PacketFrame,
@@ -259,6 +286,9 @@ internal object FrameAstHelpers {
             KtNodeTypes.TYPE_REFERENCE_ID,
             KtNodeTypes.NULLABLE_TYPE_ID,
             KtNodeTypes.TYPE_PROJECTION_ID,
+            KtNodeTypes.SUPER_TYPE_CALL_ENTRY_ID,
+            KtNodeTypes.SUPER_TYPE_ENTRY_ID,
+            KtNodeTypes.CONSTRUCTOR_CALLEE_ID,
             -> {
                 val child = childFrames(stream, typeFrame).firstOrNull { it.nodeTypeId != KtNodeTypes.MODIFIER_LIST_ID }
                 if (child != null) extractPrimaryTypeSimpleName(stream, child) else null
@@ -449,7 +479,10 @@ internal object FrameAstHelpers {
                     }
                 val bound = firstChildFrame(stream, tc, KtNodeTypes.TYPE_REFERENCE_ID)
                 if (tpName != null && bound != null) {
-                    constraintMap[tpName] = bound.frameIndex
+                    val boundSimple = extractPrimaryTypeSimpleName(stream, bound)
+                    if (tpName !in constraintMap || (boundSimple != null && boundSimple != "Comparable")) {
+                        constraintMap[tpName] = bound.frameIndex
+                    }
                 }
             }
         }
