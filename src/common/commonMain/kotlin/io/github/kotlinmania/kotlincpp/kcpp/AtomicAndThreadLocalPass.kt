@@ -207,14 +207,15 @@ internal object AtomicAndThreadLocalPass {
         val scopedAtomicsByOwner = LinkedHashMap<Int, MutableMap<String, AtomicFieldInfo>>()
         collectScopedAtomicValueParams(stream, stream.rootFrame, atomicByName, classAtomicsByClass, scopedAtomicsByOwner)
 
-        val scopeIndex = buildAtomicScopeIndex(
-            symbols = symbols,
-            topLevelAtomics = topLevelAtomics,
-            classAtomicsByClass = classAtomicsByClass,
-            localAtomicsByPropFrame = localAtomicsByPropFrame,
-            scopedAtomicsByOwner = scopedAtomicsByOwner,
-            atomicByProp = atomicByProp,
-        )
+        val scopeIndex =
+            buildAtomicScopeIndex(
+                symbols = symbols,
+                topLevelAtomics = topLevelAtomics,
+                classAtomicsByClass = classAtomicsByClass,
+                localAtomicsByPropFrame = localAtomicsByPropFrame,
+                scopedAtomicsByOwner = scopedAtomicsByOwner,
+                atomicByProp = atomicByProp,
+            )
 
         if (atomicByProp.isNotEmpty() || scopedAtomicsByOwner.isNotEmpty()) {
             val rootScope =
@@ -1375,7 +1376,8 @@ internal object AtomicAndThreadLocalPass {
             KtNodeTypes.REFERENCE_EXPRESSION_ID -> resolveRefExprClassFrame(stream, env, scope, cur)
             KtNodeTypes.BINARY_WITH_TYPE_ID -> {
                 val typeRef = FrameAstHelpers.firstChildFrame(stream, cur, KtNodeTypes.TYPE_REFERENCE_ID)
-                typeRef?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, it) }
+                typeRef
+                    ?.let { FrameAstHelpers.extractPrimaryTypeSimpleName(stream, it) }
                     ?.let { resolveClassFrameByTypeName(stream, env, it) }
             }
             KtNodeTypes.DOT_QUALIFIED_EXPRESSION_ID,
@@ -1449,8 +1451,9 @@ internal object AtomicAndThreadLocalPass {
         }
         if (parts[1].nodeTypeId == KtNodeTypes.CALL_EXPRESSION_ID) {
             val calleeRef = FrameAstHelpers.firstChildFrame(stream, parts[1], KtNodeTypes.REFERENCE_EXPRESSION_ID)
-            val methodName = calleeRef?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }
-                ?: return null
+            val methodName =
+                calleeRef?.let { FrameAstHelpers.directIdentPacket(stream, it)?.unescapedName }
+                    ?: return null
             val baseCls = resolveReceiverClassFrame(stream, env, scope, parts[0], depth + 1) ?: return null
             return resolveMemberTypeInHierarchy(stream, env, baseCls, methodName, isFunction = true)
         }
@@ -1551,9 +1554,10 @@ internal object AtomicAndThreadLocalPass {
         if (!isFunction) {
             for (vp in clsSym.primaryConstructorParams) {
                 if ((vp.isVal || vp.isVar) && vp.name == memberName) {
-                    val typeName = vp.typeFrameIndex?.let {
-                        FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it])
-                    }
+                    val typeName =
+                        vp.typeFrameIndex?.let {
+                            FrameAstHelpers.extractPrimaryTypeSimpleName(stream, stream.frames[it])
+                        }
                     return typeName?.let { resolveClassFrameByTypeName(stream, env, it) }
                 }
             }

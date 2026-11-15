@@ -1940,19 +1940,21 @@ class KotlinToCppTranslationTest {
                 public inline fun <R> runInner(block: Box<E>.() -> R): R = block()
 
                 public fun outerTemplateCaller(other: Box<E>) {
-                    other.inspect { }
-                    runInner { }
+                    other.inspect { if (it == item) return }
+                    runInner { if (this === other) return }
                 }
             }
 
             public fun callInlineOnConcreteBox(box: Box<Int>?, cond: Boolean): Any? {
                 val concrete: Box<Int> = Box(1)
-                concrete.inspect { }
-                box?.inspect { }
-                return when {
-                    cond -> 1
-                    else -> null
-                }
+                concrete.inspect { if (it < 0) return null }
+                box?.inspect { if (it < 0) return null }
+                val normalized: Any? =
+                    when {
+                        cond -> 1
+                        else -> null
+                    }
+                return normalized
             }
             """.trimIndent()
 
