@@ -119,4 +119,6 @@ gradle.beforeProject {
 
 rootProject.name = providers.gradleProperty("project.name").get()
 
+includeBuild("../antlr4-kotlin")
+
 include(":ide-plugin")

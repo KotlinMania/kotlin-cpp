@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 JNIEXPORT jint JNICALL
-Java_io_github_kotlinmania_rustkotlin_internal_FfiJni_getpid(
+Java_io_github_kotlinmania_kotlincpp_internal_FfiJni_getpid(
     JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
 #ifndef _WIN32

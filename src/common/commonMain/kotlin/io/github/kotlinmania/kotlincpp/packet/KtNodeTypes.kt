@@ -1,0 +1,256 @@
+package io.github.kotlinmania.kotlincpp.packet
+
+/**
+ * Canonical hierarchical Kotlin syntax frame node IDs overlaid on [PacketStream].
+ */
+internal object KtNodeTypes {
+    const val KT_FILE_ID: Int = 1
+    const val PACKAGE_DIRECTIVE_ID: Int = 2
+    const val FILE_ANNOTATION_LIST_ID: Int = 3
+    const val IMPORT_LIST_ID: Int = 4
+    const val IMPORT_DIRECTIVE_ID: Int = 5
+    const val IMPORT_ALIAS_ID: Int = 6
+    const val CLASS_ID: Int = 7
+    const val OBJECT_DECLARATION_ID: Int = 8
+    const val FUN_ID: Int = 9
+    const val PROPERTY_ID: Int = 10
+    const val PROPERTY_ACCESSOR_ID: Int = 11
+    const val BACKING_FIELD_ID: Int = 12
+    const val TYPEALIAS_ID: Int = 13
+    const val ENUM_ENTRY_ID: Int = 14
+    const val CLASS_INITIALIZER_ID: Int = 15
+    const val SECONDARY_CONSTRUCTOR_ID: Int = 16
+    const val PRIMARY_CONSTRUCTOR_ID: Int = 17
+    const val CLASS_BODY_ID: Int = 18
+    const val DESTRUCTURING_DECLARATION_ID: Int = 19
+    const val DESTRUCTURING_DECLARATION_ENTRY_ID: Int = 20
+    const val PROPERTY_DELEGATE_ID: Int = 21
+    const val CONSTRUCTOR_DELEGATION_CALL_ID: Int = 22
+    const val CONSTRUCTOR_DELEGATION_REFERENCE_ID: Int = 23
+    const val SCRIPT_ID: Int = 24
+    const val SCRIPT_INITIALIZER_ID: Int = 25
+
+    // Modifiers, parameters, annotations, supertypes & contracts
+    const val MODIFIER_LIST_ID: Int = 26
+    const val ANNOTATION_ID: Int = 27
+    const val ANNOTATION_ENTRY_ID: Int = 28
+    const val ANNOTATION_TARGET_ID: Int = 29
+    const val VALUE_PARAMETER_LIST_ID: Int = 30
+    const val VALUE_PARAMETER_ID: Int = 31
+    const val TYPE_PARAMETER_LIST_ID: Int = 32
+    const val TYPE_PARAMETER_ID: Int = 33
+    const val TYPE_CONSTRAINT_LIST_ID: Int = 34
+    const val TYPE_CONSTRAINT_ID: Int = 35
+    const val SUPER_TYPE_LIST_ID: Int = 36
+    const val INITIALIZER_LIST_ID: Int = 37
+    const val DELEGATED_SUPER_TYPE_ENTRY_ID: Int = 38
+    const val SUPER_TYPE_CALL_ENTRY_ID: Int = 39
+    const val SUPER_TYPE_ENTRY_ID: Int = 40
+    const val CONSTRUCTOR_CALLEE_ID: Int = 41
+    const val CONTEXT_RECEIVER_ID: Int = 42
+    const val CONTEXT_PARAMETER_LIST_ID: Int = 43
+    const val CONTRACT_EFFECT_LIST_ID: Int = 44
+    const val CONTRACT_EFFECT_ID: Int = 45
+
+    // Type references
+    const val TYPE_REFERENCE_ID: Int = 46
+    const val USER_TYPE_ID: Int = 47
+    const val NULLABLE_TYPE_ID: Int = 48
+    const val INTERSECTION_TYPE_ID: Int = 49
+    const val FUNCTION_TYPE_ID: Int = 50
+    const val FUNCTION_TYPE_RECEIVER_ID: Int = 51
+    const val DYNAMIC_TYPE_ID: Int = 52
+    const val TYPE_PROJECTION_ID: Int = 53
+    const val TYPE_ARGUMENT_LIST_ID: Int = 54
+
+    // String templates & constants
+    const val STRING_TEMPLATE_ID: Int = 55
+    const val STRING_INTERPOLATION_PREFIX_ID: Int = 56
+    const val LITERAL_STRING_TEMPLATE_ENTRY_ID: Int = 57
+    const val ESCAPE_STRING_TEMPLATE_ENTRY_ID: Int = 58
+    const val SHORT_STRING_TEMPLATE_ENTRY_ID: Int = 59
+    const val LONG_STRING_TEMPLATE_ENTRY_ID: Int = 60
+    const val NULL_ID: Int = 61
+    const val BOOLEAN_CONSTANT_ID: Int = 62
+    const val FLOAT_CONSTANT_ID: Int = 63
+    const val CHARACTER_CONSTANT_ID: Int = 64
+    const val INTEGER_CONSTANT_ID: Int = 65
+    const val CLASS_LITERAL_EXPRESSION_ID: Int = 66
+    const val COLLECTION_LITERAL_EXPRESSION_ID: Int = 67
+
+    // Control flow & expressions
+    const val PARENTHESIZED_ID: Int = 68
+    const val RETURN_ID: Int = 69
+    const val THROW_ID: Int = 70
+    const val CONTINUE_ID: Int = 71
+    const val BREAK_ID: Int = 72
+    const val IF_ID: Int = 73
+    const val CONDITION_ID: Int = 74
+    const val THEN_ID: Int = 75
+    const val ELSE_ID: Int = 76
+    const val TRY_ID: Int = 77
+    const val CATCH_ID: Int = 78
+    const val FINALLY_ID: Int = 79
+    const val FOR_ID: Int = 80
+    const val WHILE_ID: Int = 81
+    const val DO_WHILE_ID: Int = 82
+    const val LOOP_RANGE_ID: Int = 83
+    const val BODY_ID: Int = 84
+    const val LAMBDA_EXPRESSION_ID: Int = 85
+    const val FUNCTION_LITERAL_ID: Int = 86
+    const val LAMBDA_ARGUMENT_ID: Int = 87
+    const val ANNOTATED_EXPRESSION_ID: Int = 88
+    const val OPERATION_REFERENCE_ID: Int = 89
+    const val LABEL_ID: Int = 90
+    const val LABEL_QUALIFIER_ID: Int = 91
+    const val THIS_EXPRESSION_ID: Int = 92
+    const val SUPER_EXPRESSION_ID: Int = 93
+    const val REFERENCE_EXPRESSION_ID: Int = 94
+    const val DOT_QUALIFIED_EXPRESSION_ID: Int = 95
+    const val ENUM_ENTRY_SUPERCLASS_REFERENCE_EXPRESSION_ID: Int = 96
+    const val VALUE_ARGUMENT_LIST_ID: Int = 97
+    const val VALUE_ARGUMENT_ID: Int = 98
+    const val VALUE_ARGUMENT_NAME_ID: Int = 99
+    const val BINARY_EXPRESSION_ID: Int = 100
+    const val BINARY_WITH_TYPE_ID: Int = 101
+    const val IS_EXPRESSION_ID: Int = 102
+    const val PREFIX_EXPRESSION_ID: Int = 103
+    const val POSTFIX_EXPRESSION_ID: Int = 104
+    const val LABELED_EXPRESSION_ID: Int = 105
+    const val CALL_EXPRESSION_ID: Int = 106
+    const val ARRAY_ACCESS_EXPRESSION_ID: Int = 107
+    const val INDICES_ID: Int = 108
+    const val CALLABLE_REFERENCE_EXPRESSION_ID: Int = 109
+    const val SAFE_ACCESS_EXPRESSION_ID: Int = 110
+    const val OBJECT_LITERAL_ID: Int = 111
+    const val WHEN_ID: Int = 112
+    const val WHEN_ENTRY_ID: Int = 113
+    const val WHEN_ENTRY_GUARD_ID: Int = 114
+    const val WHEN_CONDITION_IN_RANGE_ID: Int = 115
+    const val WHEN_CONDITION_IS_PATTERN_ID: Int = 116
+    const val WHEN_CONDITION_EXPRESSION_ID: Int = 117
+    const val BLOCK_ID: Int = 118
+
+    fun debugName(id: Int): String =
+        when (id) {
+            KT_FILE_ID -> "KT_FILE"
+            PACKAGE_DIRECTIVE_ID -> "PACKAGE_DIRECTIVE"
+            FILE_ANNOTATION_LIST_ID -> "FILE_ANNOTATION_LIST"
+            IMPORT_LIST_ID -> "IMPORT_LIST"
+            IMPORT_DIRECTIVE_ID -> "IMPORT_DIRECTIVE"
+            IMPORT_ALIAS_ID -> "IMPORT_ALIAS"
+            CLASS_ID -> "CLASS"
+            OBJECT_DECLARATION_ID -> "OBJECT_DECLARATION"
+            FUN_ID -> "FUN"
+            PROPERTY_ID -> "PROPERTY"
+            PROPERTY_ACCESSOR_ID -> "PROPERTY_ACCESSOR"
+            BACKING_FIELD_ID -> "BACKING_FIELD"
+            TYPEALIAS_ID -> "TYPEALIAS"
+            ENUM_ENTRY_ID -> "ENUM_ENTRY"
+            CLASS_INITIALIZER_ID -> "CLASS_INITIALIZER"
+            SECONDARY_CONSTRUCTOR_ID -> "SECONDARY_CONSTRUCTOR"
+            PRIMARY_CONSTRUCTOR_ID -> "PRIMARY_CONSTRUCTOR"
+            CLASS_BODY_ID -> "CLASS_BODY"
+            DESTRUCTURING_DECLARATION_ID -> "DESTRUCTURING_DECLARATION"
+            DESTRUCTURING_DECLARATION_ENTRY_ID -> "DESTRUCTURING_DECLARATION_ENTRY"
+            PROPERTY_DELEGATE_ID -> "PROPERTY_DELEGATE"
+            CONSTRUCTOR_DELEGATION_CALL_ID -> "CONSTRUCTOR_DELEGATION_CALL"
+            CONSTRUCTOR_DELEGATION_REFERENCE_ID -> "CONSTRUCTOR_DELEGATION_REFERENCE"
+            SCRIPT_ID -> "SCRIPT"
+            SCRIPT_INITIALIZER_ID -> "SCRIPT_INITIALIZER"
+            MODIFIER_LIST_ID -> "MODIFIER_LIST"
+            ANNOTATION_ID -> "ANNOTATION"
+            ANNOTATION_ENTRY_ID -> "ANNOTATION_ENTRY"
+            ANNOTATION_TARGET_ID -> "ANNOTATION_TARGET"
+            VALUE_PARAMETER_LIST_ID -> "VALUE_PARAMETER_LIST"
+            VALUE_PARAMETER_ID -> "VALUE_PARAMETER"
+            TYPE_PARAMETER_LIST_ID -> "TYPE_PARAMETER_LIST"
+            TYPE_PARAMETER_ID -> "TYPE_PARAMETER"
+            TYPE_CONSTRAINT_LIST_ID -> "TYPE_CONSTRAINT_LIST"
+            TYPE_CONSTRAINT_ID -> "TYPE_CONSTRAINT"
+            SUPER_TYPE_LIST_ID -> "SUPER_TYPE_LIST"
+            INITIALIZER_LIST_ID -> "INITIALIZER_LIST"
+            DELEGATED_SUPER_TYPE_ENTRY_ID -> "DELEGATED_SUPER_TYPE_ENTRY"
+            SUPER_TYPE_CALL_ENTRY_ID -> "SUPER_TYPE_CALL_ENTRY"
+            SUPER_TYPE_ENTRY_ID -> "SUPER_TYPE_ENTRY"
+            CONSTRUCTOR_CALLEE_ID -> "CONSTRUCTOR_CALLEE"
+            CONTEXT_RECEIVER_ID -> "CONTEXT_RECEIVER"
+            CONTEXT_PARAMETER_LIST_ID -> "CONTEXT_PARAMETER_LIST"
+            CONTRACT_EFFECT_LIST_ID -> "CONTRACT_EFFECT_LIST"
+            CONTRACT_EFFECT_ID -> "CONTRACT_EFFECT"
+            TYPE_REFERENCE_ID -> "TYPE_REFERENCE"
+            USER_TYPE_ID -> "USER_TYPE"
+            NULLABLE_TYPE_ID -> "NULLABLE_TYPE"
+            INTERSECTION_TYPE_ID -> "INTERSECTION_TYPE"
+            FUNCTION_TYPE_ID -> "FUNCTION_TYPE"
+            FUNCTION_TYPE_RECEIVER_ID -> "FUNCTION_TYPE_RECEIVER"
+            DYNAMIC_TYPE_ID -> "DYNAMIC_TYPE"
+            TYPE_PROJECTION_ID -> "TYPE_PROJECTION"
+            TYPE_ARGUMENT_LIST_ID -> "TYPE_ARGUMENT_LIST"
+            STRING_TEMPLATE_ID -> "STRING_TEMPLATE"
+            STRING_INTERPOLATION_PREFIX_ID -> "STRING_INTERPOLATION_PREFIX"
+            LITERAL_STRING_TEMPLATE_ENTRY_ID -> "LITERAL_STRING_TEMPLATE_ENTRY"
+            ESCAPE_STRING_TEMPLATE_ENTRY_ID -> "ESCAPE_STRING_TEMPLATE_ENTRY"
+            SHORT_STRING_TEMPLATE_ENTRY_ID -> "SHORT_STRING_TEMPLATE_ENTRY"
+            LONG_STRING_TEMPLATE_ENTRY_ID -> "LONG_STRING_TEMPLATE_ENTRY"
+            NULL_ID -> "NULL"
+            BOOLEAN_CONSTANT_ID -> "BOOLEAN_CONSTANT"
+            FLOAT_CONSTANT_ID -> "FLOAT_CONSTANT"
+            CHARACTER_CONSTANT_ID -> "CHARACTER_CONSTANT"
+            INTEGER_CONSTANT_ID -> "INTEGER_CONSTANT"
+            CLASS_LITERAL_EXPRESSION_ID -> "CLASS_LITERAL_EXPRESSION"
+            COLLECTION_LITERAL_EXPRESSION_ID -> "COLLECTION_LITERAL_EXPRESSION"
+            PARENTHESIZED_ID -> "PARENTHESIZED"
+            RETURN_ID -> "RETURN"
+            THROW_ID -> "THROW"
+            CONTINUE_ID -> "CONTINUE"
+            BREAK_ID -> "BREAK"
+            IF_ID -> "IF"
+            CONDITION_ID -> "CONDITION"
+            THEN_ID -> "THEN"
+            ELSE_ID -> "ELSE"
+            TRY_ID -> "TRY"
+            CATCH_ID -> "CATCH"
+            FINALLY_ID -> "FINALLY"
+            FOR_ID -> "FOR"
+            WHILE_ID -> "WHILE"
+            DO_WHILE_ID -> "DO_WHILE"
+            LOOP_RANGE_ID -> "LOOP_RANGE"
+            BODY_ID -> "BODY"
+            LAMBDA_EXPRESSION_ID -> "LAMBDA_EXPRESSION"
+            FUNCTION_LITERAL_ID -> "FUNCTION_LITERAL"
+            LAMBDA_ARGUMENT_ID -> "LAMBDA_ARGUMENT"
+            ANNOTATED_EXPRESSION_ID -> "ANNOTATED_EXPRESSION"
+            OPERATION_REFERENCE_ID -> "OPERATION_REFERENCE"
+            LABEL_ID -> "LABEL"
+            LABEL_QUALIFIER_ID -> "LABEL_QUALIFIER"
+            THIS_EXPRESSION_ID -> "THIS_EXPRESSION"
+            SUPER_EXPRESSION_ID -> "SUPER_EXPRESSION"
+            REFERENCE_EXPRESSION_ID -> "REFERENCE_EXPRESSION"
+            DOT_QUALIFIED_EXPRESSION_ID -> "DOT_QUALIFIED_EXPRESSION"
+            ENUM_ENTRY_SUPERCLASS_REFERENCE_EXPRESSION_ID -> "ENUM_ENTRY_SUPERCLASS_REFERENCE_EXPRESSION"
+            VALUE_ARGUMENT_LIST_ID -> "VALUE_ARGUMENT_LIST"
+            VALUE_ARGUMENT_ID -> "VALUE_ARGUMENT"
+            VALUE_ARGUMENT_NAME_ID -> "VALUE_ARGUMENT_NAME"
+            BINARY_EXPRESSION_ID -> "BINARY_EXPRESSION"
+            BINARY_WITH_TYPE_ID -> "BINARY_WITH_TYPE"
+            IS_EXPRESSION_ID -> "IS_EXPRESSION"
+            PREFIX_EXPRESSION_ID -> "PREFIX_EXPRESSION"
+            POSTFIX_EXPRESSION_ID -> "POSTFIX_EXPRESSION"
+            LABELED_EXPRESSION_ID -> "LABELED_EXPRESSION"
+            CALL_EXPRESSION_ID -> "CALL_EXPRESSION"
+            ARRAY_ACCESS_EXPRESSION_ID -> "ARRAY_ACCESS_EXPRESSION"
+            INDICES_ID -> "INDICES"
+            CALLABLE_REFERENCE_EXPRESSION_ID -> "CALLABLE_REFERENCE_EXPRESSION"
+            SAFE_ACCESS_EXPRESSION_ID -> "SAFE_ACCESS_EXPRESSION"
+            OBJECT_LITERAL_ID -> "OBJECT_LITERAL"
+            WHEN_ID -> "WHEN"
+            WHEN_ENTRY_ID -> "WHEN_ENTRY"
+            WHEN_ENTRY_GUARD_ID -> "WHEN_ENTRY_GUARD"
+            WHEN_CONDITION_IN_RANGE_ID -> "WHEN_CONDITION_IN_RANGE"
+            WHEN_CONDITION_IS_PATTERN_ID -> "WHEN_CONDITION_IS_PATTERN"
+            WHEN_CONDITION_EXPRESSION_ID -> "WHEN_CONDITION_EXPRESSION"
+            BLOCK_ID -> "BLOCK"
+            else -> "UNKNOWN_NODE_$id"
+        }
+}
