@@ -3,6 +3,7 @@
 package io.github.kotlinmania.kotlincpp
 
 import io.github.kotlinmania.io.files.SystemFileSystem
+import io.github.kotlinmania.libc.COpaquePointer
 import io.github.kotlinmania.libc.unix.access
 import io.github.kotlinmania.libc.unix.bsd.O_CREAT
 import io.github.kotlinmania.libc.unix.bsd.O_EXCL
@@ -14,55 +15,21 @@ import io.github.kotlinmania.libc.unix.bsd.apple.R_OK
 import io.github.kotlinmania.libc.unix.bsd.apple.W_OK
 import io.github.kotlinmania.libc.unix.fclose
 import io.github.kotlinmania.libc.unix.fopen
-import io.github.kotlinmania.libc.unix.free
 import io.github.kotlinmania.libc.unix.fwrite
 import io.github.kotlinmania.libc.unix.readlink
 import io.github.kotlinmania.libc.unix.realpath
-import io.github.kotlinmania.rustlang.alloc.ffi.CString
-import io.github.kotlinmania.rustlang.core.ffi.CStr
-import io.github.kotlinmania.rustlang.core.ptr.ConstPtr
-import io.github.kotlinmania.rustlang.core.ptr.MutPtr
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import io.github.kotlinmania.io.files.Path as KmPath
 
-private inline fun <R> withPosixCString(
-    text: String,
-    block: (ConstPtr) -> R,
-): R {
-    val cstr = CString.new(text).unwrap()
-    return try {
-        block(cstr.asPtr())
-    } finally {
-        cstr.deallocate()
-    }
-}
+private fun posixAccess(path: String, mode: Int): Int = access(path, mode)
 
-private fun posixAccess(path: String, mode: Int): Int =
-    withPosixCString(path) { pathPtr ->
-        access(pathPtr, mode)
-    }
-
-private fun posixRealpath(path: String): String? =
-    withPosixCString(path) { pathPtr ->
-        val raw = realpath(pathPtr, MutPtr(0L))
-        if (raw.isNull()) {
-            null
-        } else {
-            try {
-                CStr.fromPtr(raw.castConst()).toStringLossy()
-            } finally {
-                free(raw)
-            }
-        }
-    }
+private fun posixRealpath(path: String): String? = realpath(path, null)
 
 private fun isPosixPathSymbolicLink(path: String): Boolean {
     val probe = ByteArray(1)
-    return withPosixCString(path) { pathPtr ->
-        probe.usePinned { pinned ->
-            readlink(pathPtr, MutPtr(pinned.addressOf(0).rawValue.toLong()), 1uL) >= 0
-        }
+    return probe.usePinned { pinned ->
+        readlink(path, COpaquePointer(pinned.addressOf(0).rawValue.toLong()), 1uL) >= 0
     }
 }
 
@@ -163,13 +130,8 @@ public actual fun writeNew(path: String, text: String) {
     require(!details.exists && !details.isSymbolicLink) {
         "cannot exclusively create $path (posixFlags=0x${details.posixOpenFlags.toString(16)})"
     }
-    val file =
-        withPosixCString(path) { pathPtr ->
-            withPosixCString("wx") { modePtr ->
-                fopen(pathPtr, modePtr)
-            }
-        }
-    check(!file.isNull()) { "cannot exclusively create $path" }
+    val file = fopen(path, "wx")
+    check(file != null) { "cannot exclusively create $path" }
     var complete = false
     try {
         val bytes = text.encodeToByteArray()
@@ -177,7 +139,7 @@ public actual fun writeNew(path: String, text: String) {
             bytes.usePinned { pinned ->
                 var offset = 0
                 while (offset < bytes.size) {
-                    val address = ConstPtr(pinned.addressOf(offset).rawValue.toLong())
+                    val address = COpaquePointer(pinned.addressOf(offset).rawValue.toLong())
                     val count = fwrite(address, 1uL, (bytes.size - offset).toULong(), file)
                     check(count > 0uL && count <= (bytes.size - offset).toULong()) {
                         "output may be partial at $path"

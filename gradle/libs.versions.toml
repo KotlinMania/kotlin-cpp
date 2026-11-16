@@ -15,16 +15,13 @@ intellijPlatform = "2.19.0"
 junit = "4.13.2"
 kmIo = "0.4.0"
 antlr4Kotlin = "0.2.1"
-libcKotlin = "0.1.13"
+libcKotlin = "0.1.11"
 windowsSysKotlin = "0.1.2"
-serdeJsonKotlin = "0.2.0"
 procMacroKotlin = "0.1.5"
 procMacro2Kotlin = "0.1.8"
 quoteKotlin = "0.3.1"
 synKotlin = "0.5.0"
-anyhowKotlin = "0.2.0"
-numBigintKotlin = "0.1.2"
-serdeDerive = "0.1.12"
+anyhowKotlin = "0.2.1"
 
 [plugins]
 android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "androidKmp" }
@@ -52,14 +49,11 @@ km-io = { module = "io.github.kotlinmania:km-io", version.ref = "kmIo" }
 antlr4-kotlin = { module = "io.github.kotlinmania:antlr4-kotlin", version.ref = "antlr4Kotlin" }
 libc-kotlin = { module = "io.github.kotlinmania:libc-kotlin", version.ref = "libcKotlin" }
 windows-sys-kotlin = { module = "io.github.kotlinmania:windows-sys-kotlin", version.ref = "windowsSysKotlin" }
-serde-json-kotlin = { module = "io.github.kotlinmania:serde-json-kotlin", version.ref = "serdeJsonKotlin" }
 proc-macro-kotlin = { module = "io.github.kotlinmania:proc-macro-kotlin", version.ref = "procMacroKotlin" }
 proc-macro2-kotlin = { module = "io.github.kotlinmania:proc-macro2-kotlin", version.ref = "procMacro2Kotlin" }
 quote-kotlin = { module = "io.github.kotlinmania:quote-kotlin", version.ref = "quoteKotlin" }
 syn-kotlin = { module = "io.github.kotlinmania:syn-kotlin", version.ref = "synKotlin" }
 anyhow-kotlin = { module = "io.github.kotlinmania:anyhow-kotlin", version.ref = "anyhowKotlin" }
-num-bigint-kotlin = { module = "io.github.kotlinmania:num-bigint-kotlin", version.ref = "numBigintKotlin" }
-serde-derive = { module = "io.github.kotlinmania:serde-derive", version.ref = "serdeDerive" }
 
 [bundles]
 kotlin-cpp-commonMain = [

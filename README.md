@@ -339,10 +339,9 @@ Build the distributable plugin ZIP:
 
 Requirements: JDK 21 and, for Apple / Swift Export targets, macOS on Apple Silicon with Xcode. The Gradle wrapper (`9.8.2`) is checked in.
 
-When building from source prior to `io.github.kotlinmania:antlr4-kotlin:0.2.1` Maven Central publication, check out sibling [`KotlinMania/antlr4-kotlin`](https://github.com/KotlinMania/antlr4-kotlin) alongside `kotlin-cpp` (`settings.gradle.kts` links `../antlr4-kotlin`):
+Clone and build directly against Maven Central (`maven.local=false`):
 
 ```bash
-git clone https://github.com/KotlinMania/antlr4-kotlin.git
 git clone https://github.com/KotlinMania/kotlin-cpp.git
 cd kotlin-cpp
 ./gradlew build
@@ -382,7 +381,7 @@ All runtime dependencies are pure-KMP KotlinMania libraries under `io.github.kot
 
 ## Status
 
-Project version `1.1.0`. No release has been published to Maven Central or JetBrains Marketplace yet; build from source (with `../antlr4-kotlin` checked out alongside `kotlin-cpp`).
+Project version `1.1.0`. All upstream `io.github.kotlinmania:*` dependencies are published on Maven Central (`maven.local=false`); `kotlin-cpp` itself has not been published to Maven Central or JetBrains Marketplace yet.
 
 GitHub Actions workflows are configured for manual `workflow_dispatch` (`ci.yml` + reusable per-platform workflows) and `release: [released]` (`publish.yml`).
 

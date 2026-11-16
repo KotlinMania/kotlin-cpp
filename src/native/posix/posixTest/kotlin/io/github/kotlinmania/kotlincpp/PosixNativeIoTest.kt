@@ -11,7 +11,6 @@ import io.github.kotlinmania.libc.unix.bsd.O_WRONLY
 import io.github.kotlinmania.libc.unix.getpid
 import io.github.kotlinmania.libc.unix.symlink
 import io.github.kotlinmania.libc.unix.unlink
-import io.github.kotlinmania.rustlang.alloc.ffi.CString
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,28 +34,13 @@ class PosixNativeIoTest {
     }
 
     private fun deletePathIfExists(path: String) {
-        val pathCStr = CString.new(path).unwrap()
-        try {
-            unlink(pathCStr.asPtr())
-        } finally {
-            pathCStr.deallocate()
-        }
+        unlink(path)
         SystemFileSystem.delete(KmPath(path), mustExist = false)
     }
 
     private fun createSymlink(target: String, linkPath: String) {
-        val targetCStr = CString.new(target).unwrap()
-        try {
-            val linkCStr = CString.new(linkPath).unwrap()
-            try {
-                check(symlink(targetCStr.asPtr(), linkCStr.asPtr()) == 0) {
-                    "symlink failed creating symlink $linkPath -> $target"
-                }
-            } finally {
-                linkCStr.deallocate()
-            }
-        } finally {
-            targetCStr.deallocate()
+        check(symlink(target, linkPath) == 0) {
+            "symlink failed creating symlink $linkPath -> $target"
         }
     }
 

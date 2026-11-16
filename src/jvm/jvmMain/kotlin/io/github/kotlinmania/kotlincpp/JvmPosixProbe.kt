@@ -11,44 +11,12 @@ import io.github.kotlinmania.libc.unix.bsd.O_WRONLY
 import io.github.kotlinmania.libc.unix.bsd.apple.F_OK
 import io.github.kotlinmania.libc.unix.bsd.apple.R_OK
 import io.github.kotlinmania.libc.unix.bsd.apple.W_OK
-import io.github.kotlinmania.libc.unix.free
 import io.github.kotlinmania.libc.unix.realpath
-import io.github.kotlinmania.rustlang.alloc.ffi.CString
-import io.github.kotlinmania.rustlang.core.ffi.CStr
-import io.github.kotlinmania.rustlang.core.ptr.ConstPtr
-import io.github.kotlinmania.rustlang.core.ptr.MutPtr
 import io.github.kotlinmania.io.files.Path as KmPath
 
-private inline fun <R> withJvmPosixCString(
-    text: String,
-    block: (ConstPtr) -> R,
-): R {
-    val cstr = CString.new(text).unwrap()
-    return try {
-        block(cstr.asPtr())
-    } finally {
-        cstr.deallocate()
-    }
-}
+private fun jvmPosixAccess(path: String, mode: Int): Int = access(path, mode)
 
-private fun jvmPosixAccess(path: String, mode: Int): Int =
-    withJvmPosixCString(path) { pathPtr ->
-        access(pathPtr, mode)
-    }
-
-private fun jvmPosixRealpath(path: String): String? =
-    withJvmPosixCString(path) { pathPtr ->
-        val raw = realpath(pathPtr, MutPtr(0L))
-        if (raw.isNull()) {
-            null
-        } else {
-            try {
-                CStr.fromPtr(raw.castConst()).toStringLossy()
-            } finally {
-                free(raw)
-            }
-        }
-    }
+private fun jvmPosixRealpath(path: String): String? = realpath(path, null)
 
 internal fun probeTargetKotlinFileJvmPosix(path: String): TargetKotlinFileDetails {
     val normalizedPath = path.replace('\\', '/')
