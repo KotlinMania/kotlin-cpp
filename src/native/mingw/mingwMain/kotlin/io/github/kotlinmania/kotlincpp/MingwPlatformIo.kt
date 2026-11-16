@@ -4,12 +4,12 @@ package io.github.kotlinmania.kotlincpp
 
 import io.github.kotlinmania.io.files.SystemFileSystem
 import io.github.kotlinmania.io.files.toAbsolutePath
-import io.github.kotlinmania.rustlang.core.ptr.ConstPtr
-import io.github.kotlinmania.rustlang.core.ptr.MutPtr
+import io.github.kotlinmania.windowssys.windows.win32.foundation.CloseHandle
 import io.github.kotlinmania.windowssys.windows.win32.foundation.INVALID_HANDLE_VALUE
-import io.github.kotlinmania.windowssys.windows.win32.foundation.closeHandle
+import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.AreFileApisANSI
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.CREATE_ALWAYS
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.CREATE_NEW
+import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.CreateFileW
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_ATTRIBUTE_DIRECTORY
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_ATTRIBUTE_NORMAL
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_ATTRIBUTE_READONLY
@@ -17,9 +17,7 @@ import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_GE
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_GENERIC_WRITE
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_SHARE_READ
 import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.FILE_SHARE_WRITE
-import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.areFileApisANSI
-import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.createFileW
-import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.getFileAttributesW
+import io.github.kotlinmania.windowssys.windows.win32.storage.filesystem.GetFileAttributesW
 import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
@@ -44,12 +42,12 @@ public actual fun probeTargetKotlinFile(path: String): TargetKotlinFileDetails {
 
     val rawAttrs =
         memScoped {
-            getFileAttributesW(ConstPtr(path.wcstr.ptr.toLong()))
+            GetFileAttributesW(path.wcstr.ptr.toLong())
         }
     val hasAttrs = rawAttrs != INVALID_FILE_ATTRIBUTES
     val exists = kmExists || hasAttrs
 
-    val ansiActive = areFileApisANSI() != 0
+    val ansiActive = AreFileApisANSI() != 0
     val resolvedRealPath =
         if (!exists) {
             null
@@ -163,17 +161,17 @@ public actual fun writeNew(path: String, text: String) {
     }
     val handle =
         memScoped {
-            createFileW(
-                lpfilename = ConstPtr(path.wcstr.ptr.toLong()),
+            CreateFileW(
+                lpfilename = path.wcstr.ptr.toLong(),
                 dwdesiredaccess = FILE_GENERIC_WRITE,
                 dwsharemode = 0u,
-                lpsecurityattributes = ConstPtr(0L),
+                lpsecurityattributes = 0L,
                 dwcreationdisposition = CREATE_NEW,
                 dwflagsandattributes = FILE_ATTRIBUTE_NORMAL,
-                htemplatefile = MutPtr(0L),
+                htemplatefile = 0L,
             )
         }
-    check(handle.rawAddress != INVALID_HANDLE_VALUE.rawAddress && handle.rawAddress != 0L) {
+    check(handle != INVALID_HANDLE_VALUE && handle != 0L) {
         "cannot exclusively create $path"
     }
     var complete = false
@@ -187,7 +185,7 @@ public actual fun writeNew(path: String, text: String) {
                     while (offset < bytes.size) {
                         val remaining = (bytes.size - offset).toUInt()
                         written.value = 0u
-                        val ok = WriteFile(handle.rawAddress.toCPointer(), pinned.addressOf(offset), remaining, written.ptr, null)
+                        val ok = WriteFile(handle.toCPointer(), pinned.addressOf(offset), remaining, written.ptr, null)
                         val count = written.value.toInt()
                         check(ok != 0 && count > 0 && count <= bytes.size - offset) {
                             "output may be partial at $path"
@@ -199,7 +197,7 @@ public actual fun writeNew(path: String, text: String) {
         }
         complete = true
     } finally {
-        val closed = closeHandle(handle)
+        val closed = CloseHandle(handle)
         check(closed != 0 || !complete) { "failed to close output $path" }
     }
 }
